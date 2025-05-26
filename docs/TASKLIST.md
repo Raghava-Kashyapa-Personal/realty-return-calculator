@@ -47,3 +47,8 @@ This document outlines pending tasks, potential improvements, and notes from cod
 - Harmonized `Payment` and `CashFlowEntry` type definitions across `src/types/project.ts`, `src/utils/csvExport.ts`, and `PaymentsCashFlow.tsx`.
 - Ensured edit/delete buttons in `PaymentsTable.tsx` are grouped as per user preference.
 - Updated README.md with project-specific information.
+
+## Intern Tasks (new)
+- Integrate the import  with AI instead  of a strict CSV
+- Save each project in a FireBase backend
+- 
