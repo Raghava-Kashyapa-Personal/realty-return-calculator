@@ -9,14 +9,17 @@ const PAYMENTS_COLLECTION = 'test'; // Using 'test' as specified by the user
 /**
  * Saves project data to Firestore
  * @param projectData The project data to save
+ * @param sessionId Optional session ID to use as document ID
  * @returns The document ID
  */
-export const saveProjectData = async (projectData: ProjectData): Promise<string> => {
+export const saveProjectData = async (projectData: ProjectData, sessionId?: string): Promise<string> => {
   try {
-    // Use project name as the document ID or generate a timestamp-based ID if empty
-    const docId = projectData.projectName 
+    // Use provided sessionId, or derive from project name, or generate a timestamp-based ID
+    const docId = sessionId || (projectData.projectName 
       ? projectData.projectName.replace(/\s+/g, '-').toLowerCase() 
-      : `project-${Date.now()}`;
+      : `project-${Date.now()}`);
+    
+    console.log(`Saving project data to session ID: ${docId}`);
     
     // Remove any undefined values to prevent Firestore errors
     const sanitizedData = sanitizeData(projectData);
@@ -24,6 +27,7 @@ export const saveProjectData = async (projectData: ProjectData): Promise<string>
     const docRef = doc(db, CASHFLOW_COLLECTION, docId);
     await setDoc(docRef, {
       ...sanitizedData,
+      projectId: docId, // Store the ID within the document as well
       payments: [], // We'll store payments separately
       updatedAt: Timestamp.now()
     }, { merge: true });
@@ -39,14 +43,14 @@ export const saveProjectData = async (projectData: ProjectData): Promise<string>
 /**
  * Saves payments data to Firestore
  * @param payments The payments to save
- * @param projectId The project ID (optional)
+ * @param sessionId The session ID to use as document ID (optional)
  * @returns The document ID
  */
-export const savePayments = async (payments: Payment[], projectId?: string): Promise<string> => {
+export const savePayments = async (payments: Payment[], sessionId?: string): Promise<string> => {
   try {
-    // Get today's date as document ID (YYYY-MM-DD)
-    const today = new Date().toISOString().split('T')[0];
-    const docId = today;
+    // Use provided sessionId or today's date as document ID
+    const docId = sessionId || new Date().toISOString().split('T')[0];
+    console.log(`Saving payments to session ID: ${docId}`);
     
     // Sanitize the payments to remove any undefined values
     const sanitizedPayments = payments.map(payment => sanitizePaymentData(payment));
@@ -65,7 +69,7 @@ export const savePayments = async (payments: Payment[], projectId?: string): Pro
         entries: [...existingPayments, ...sanitizedPayments],
         updatedAt: Timestamp.now(),
         count: existingPayments.length + sanitizedPayments.length,
-        projectId: projectId || existingData.projectId
+        sessionId: sessionId || existingData.sessionId
       });
     } else {
       // Document doesn't exist, create it
@@ -74,7 +78,7 @@ export const savePayments = async (payments: Payment[], projectId?: string): Pro
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         count: sanitizedPayments.length,
-        projectId: projectId
+        sessionId: sessionId || docId
       });
     }
     
@@ -292,6 +296,101 @@ export const fetchAllEntries = async (limitCount: number = 20): Promise<{ entrie
   } catch (error) {
     console.error('Error fetching all entries:', error);
     return { entries: [], projectIds: [] }; // Return empty data instead of throwing
+  }
+};
+
+/**
+ * Fetches a specific session by ID from Firestore
+ * @param sessionId The document ID of the session to fetch
+ * @returns Session data with entries
+ */
+export const fetchSession = async (sessionId: string): Promise<{ entries: Payment[], projectId?: string }> => {
+  try {
+    console.log('Fetching session by ID:', sessionId);
+    const docRef = doc(db, PAYMENTS_COLLECTION, sessionId);
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      console.log('Found session with data:', data);
+      
+      // Convert Firebase timestamps back to Date objects in entries
+      const entries = (data.entries || []).map((entry: any) => {
+        // Handle date conversion from Firestore timestamp to Date
+        let date = entry.date;
+        if (date && typeof date.toDate === 'function') {
+          date = date.toDate();
+        }
+        
+        return {
+          ...entry,
+          date,
+          id: entry.id || `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` // Ensure we have an ID
+        };
+      });
+      
+      return { 
+        entries, 
+        projectId: data.projectId 
+      };
+    }
+    
+    return { entries: [] };
+  } catch (error) {
+    console.error(`Error fetching session ${sessionId}:`, error);
+    return { entries: [] };
+  }
+};
+
+/**
+ * Get all sessions (documents) from the payments collection
+ * @param limit Maximum number of sessions to retrieve
+ * @returns Array of session objects with id, date, and entry count
+ */
+export const fetchSessions = async (limitCount: number = 20) => {
+  try {
+    const sessionsRef = collection(db, PAYMENTS_COLLECTION);
+    const q = query(sessionsRef, orderBy('createdAt', 'desc'), limit(limitCount));
+    const querySnapshot = await getDocs(q);
+    
+    const sessions = [];
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      sessions.push({
+        id: doc.id,
+        date: data.createdAt?.toDate() || new Date(doc.id),
+        entryCount: (data.entries || []).length,
+        projectId: data.projectId
+      });
+    });
+    
+    return sessions;
+  } catch (error) {
+    console.error('Error fetching sessions:', error);
+    return [];
+  }
+};
+
+/**
+ * Creates a new session in Firestore with current timestamp
+ * @returns Object with new session ID
+ */
+export const createNewSession = async () => {
+  try {
+    // Use current date as document ID (YYYY-MM-DD)
+    const today = new Date().toISOString().split('T')[0];
+    const sessionId = `${today}-${Math.random().toString(36).substring(2, 8)}`;
+    
+    await setDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
+      createdAt: Timestamp.now(),
+      entries: [],
+      updatedAt: Timestamp.now()
+    });
+    
+    return { sessionId };
+  } catch (error) {
+    console.error('Error creating new session:', error);
+    throw error;
   }
 };
 

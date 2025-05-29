@@ -29,15 +29,19 @@ export interface ProjectData {
   annualInterestRate: number; // Annual interest rate as a percentage (e.g., 12 for 12%)
   purchasePrice: number;
   closingCosts: number;
-  renovationCosts: number;
-  salePrice: number;
-  saleMonth: number;
-  sellingCosts: number;
-  monthlyInterestRate: number;
-  discountRate: number;
+  // Support both property naming conventions
+  renovationCosts?: number;
+  repairs?: number;
+  salePrice?: number;
+  afterRepairValue?: number;
+  otherInitialCosts?: number;
+  saleMonth?: number;
+  sellingCosts?: number;
+  monthlyInterestRate?: number;
+  discountRate?: number;
   payments: Payment[];
   rentalIncome: IncomeItem[];
-  operatingExpenses: ExpenseItem[];
+  operatingExpenses?: ExpenseItem[];
 }
 
 export interface CashFlowRow {
