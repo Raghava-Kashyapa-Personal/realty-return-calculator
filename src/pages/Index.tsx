@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import PaymentsCashFlow from '@/components/PaymentsCashFlow';
 import { FinancialMetrics } from '@/components/FinancialMetrics';
+import FirestoreDemo from '@/components/FirestoreDemo';
 import { ProjectData, Payment } from '@/types/project';
-import { TrendingUp, BarChart3 } from 'lucide-react';
+import { TrendingUp, BarChart3, Database } from 'lucide-react';
 
 const Index = () => {
   const [projectData, setProjectData] = useState<ProjectData>({
@@ -46,7 +47,7 @@ const Index = () => {
         </div>
 
         <Tabs defaultValue="cashflow" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="cashflow" className="flex items-center gap-2">
               <TrendingUp className="w-4 h-4" />
               <span>Cash Flow</span>
@@ -54,6 +55,10 @@ const Index = () => {
             <TabsTrigger value="analysis" className="flex items-center gap-2">
               <BarChart3 className="w-4 h-4" />
               <span>Analysis & Setup</span>
+            </TabsTrigger>
+            <TabsTrigger value="database" className="flex items-center gap-2">
+              <Database className="w-4 h-4" />
+              <span>Database</span>
             </TabsTrigger>
           </TabsList>
 
@@ -94,6 +99,20 @@ const Index = () => {
                 updateProjectData={updateProjectData}
               />
             </div>
+          </TabsContent>
+          
+          <TabsContent value="database">
+            <Card className="shadow-sm border-gray-200">
+              <CardHeader className="pb-2 px-4 pt-3">
+                <CardTitle className="flex items-center text-base font-medium text-gray-700 gap-1.5">
+                  <Database className="w-4 h-4 text-blue-600" />
+                  Firebase Storage
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4">
+                <FirestoreDemo />
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>

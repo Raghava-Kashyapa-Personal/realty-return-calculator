@@ -35,11 +35,44 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
     }
 
     // Pro-rata interest for payments made during the month
-    const sortedMonthPayments = [...paymentsInMonth].sort((a, b) => (a.date ? new Date(a.date) : monthToDate(a.month)).getTime() - (b.date ? new Date(b.date) : monthToDate(b.month)).getTime());
+    const sortedMonthPayments = [...paymentsInMonth].sort((a, b) => {
+      // Ensure we have proper Date objects for comparison
+      let dateA: Date;
+      let dateB: Date;
+      
+      if (a.date instanceof Date) {
+        dateA = a.date;
+      } else if (typeof a.date === 'string') {
+        dateA = new Date(a.date);
+      } else {
+        dateA = monthToDate(a.month);
+      }
+      
+      if (b.date instanceof Date) {
+        dateB = b.date;
+      } else if (typeof b.date === 'string') {
+        dateB = new Date(b.date);
+      } else {
+        dateB = monthToDate(b.month);
+      }
+      
+      return dateA.getTime() - dateB.getTime();
+    });
 
     for (const payment of sortedMonthPayments) {
-      if (payment.type === 'payment' && payment.amount > 0) {
-        const paymentDate = payment.date ? new Date(payment.date) : monthToDate(payment.month);
+      // In our app, payments are negative amounts (outflows)
+      // We only calculate interest on outflows (money borrowed)
+      if (payment.amount < 0) {
+        // Ensure we have a proper Date object
+        let paymentDate: Date;
+        if (payment.date instanceof Date) {
+          paymentDate = payment.date;
+        } else if (typeof payment.date === 'string') {
+          paymentDate = new Date(payment.date);
+        } else {
+          paymentDate = monthToDate(payment.month);
+        }
+        
         const daysInMonth = monthEndDate.getDate();
         const paymentDateDay = paymentDate.getDate();
         const daysRemaining = daysInMonth - paymentDateDay + 1;
@@ -101,10 +134,28 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
     // For now, we proceed assuming payments define principal changes.
   }
 
-  // Sort all non-interest payments chronologically to process them correctly
-  const allSortedPrincipalPayments = [...paymentsWithoutInterest].sort((a, b) => {
-    const dateA = a.date ? new Date(a.date) : monthToDate(a.month);
-    const dateB = b.date ? new Date(b.date) : monthToDate(b.month);
+  // Sort dates for analysis
+  const allSortedPrincipalPayments = paymentsWithoutInterest.sort((a, b) => {
+    // Ensure we have proper Date objects for comparison
+    let dateA: Date;
+    let dateB: Date;
+    
+    if (a.date instanceof Date) {
+      dateA = a.date;
+    } else if (typeof a.date === 'string') {
+      dateA = new Date(a.date);
+    } else {
+      dateA = monthToDate(a.month);
+    }
+    
+    if (b.date instanceof Date) {
+      dateB = b.date;
+    } else if (typeof b.date === 'string') {
+      dateB = new Date(b.date);
+    } else {
+      dateB = monthToDate(b.month);
+    }
+    
     return dateA.getTime() - dateB.getTime();
   });
 
@@ -143,15 +194,23 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
       const balanceAtStartOfThisMonth = runningBalance;
       
       // Update running balance with principal changes from payments in this month
-      // IMPORTANT: payment.amount is already positive for payments, but should INCREASE the balance
-      // IMPORTANT: payment.amount is positive for returns, but should DECREASE the balance
+      // IMPORTANT: Negative amounts are outflows (payments), positive are inflows (returns)
       for (const payment of paymentsInCurrentLoopMonth) {
-        if (payment.type === 'payment') {
-          // For payments, ADD the amount (increases debt/principal)
-          runningBalance += payment.amount;
-          console.log(`Added payment ${payment.amount} to balance, new balance: ${runningBalance}`);
-        } else if (payment.type === 'return') {
-          // For returns, SUBTRACT the amount (decreases debt/principal)
+        // First, make sure we're working with the correct sign
+        // In our app, payments (outflows) are stored as negative values
+        // Returns (inflows) are stored as positive values
+        
+        console.log(`Processing payment:`, payment);
+        
+        // For payments (negative amounts), we INCREASE the debt/principal
+        if (payment.amount < 0) {
+          // Add the absolute value to increase the debt
+          runningBalance += Math.abs(payment.amount);
+          console.log(`Added payment ${Math.abs(payment.amount)} to balance, new balance: ${runningBalance}`);
+        }
+        // For returns (positive amounts), we DECREASE the debt/principal
+        else if (payment.amount > 0) {
+          // Subtract directly to decrease the debt
           runningBalance -= payment.amount;
           console.log(`Subtracted return ${payment.amount} from balance, new balance: ${runningBalance}`);
         }
@@ -160,7 +219,7 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
       // Calculate interest for the current month if there was a balance or payments contributing to it
       // The interest calculation itself uses balanceAtStartOfThisMonth for the full-month part,
       // and paymentsInCurrentLoopMonth for pro-rata parts.
-      if (balanceAtStartOfThisMonth > 0 || paymentsInCurrentLoopMonth.some(p => p.type === 'payment' && p.amount > 0)) {
+      if (balanceAtStartOfThisMonth > 0 || paymentsInCurrentLoopMonth.some(p => p.amount < 0)) {
         const interestDetails = calculateInterestDetailsForMonth(balanceAtStartOfThisMonth, paymentsInCurrentLoopMonth, currentMonthStart, dailyRate, monthlyRate, interestRate);
         if (interestDetails.paymentEntry) {
           newInterestPayments.push(interestDetails.paymentEntry);
@@ -217,11 +276,44 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
   }
   
   const allPaymentsWithInterest = [
-    ...allSortedPrincipalPayments.map(p => ({ ...p, type: p.type ?? ('payment' as const), month: p.date ? (new Date(p.date).getMonth() + new Date(p.date).getFullYear() * 12) : p.month })),
-    ...newInterestPayments.map(p => ({ ...p, month: p.date ? (new Date(p.date).getMonth() + new Date(p.date).getFullYear() * 12) : p.month }))
+    ...allSortedPrincipalPayments.map(p => {
+      // Ensure month is calculated correctly from date
+      let month = p.month;
+      if (p.date) {
+        const dateObj = p.date instanceof Date ? p.date : new Date(p.date);
+        month = dateObj.getMonth() + (dateObj.getFullYear() - 2024) * 12;
+      }
+      return { ...p, type: p.type ?? ('payment' as const), month };
+    }),
+    ...newInterestPayments.map(p => {
+      // Ensure month is calculated correctly from date
+      let month = p.month;
+      if (p.date) {
+        const dateObj = p.date instanceof Date ? p.date : new Date(p.date);
+        month = dateObj.getMonth() + (dateObj.getFullYear() - 2024) * 12;
+      }
+      return { ...p, month };
+    })
   ].sort((a, b) => {
-    const dateA = a.date ? new Date(a.date) : monthToDate(a.month);
-    const dateB = b.date ? new Date(b.date) : monthToDate(b.month);
+    // Ensure we have proper Date objects for comparison
+    let dateA: Date;
+    let dateB: Date;
+    
+    if (a.date instanceof Date) {
+      dateA = a.date;
+    } else if (typeof a.date === 'string') {
+      dateA = new Date(a.date);
+    } else {
+      dateA = monthToDate(a.month);
+    }
+    
+    if (b.date instanceof Date) {
+      dateB = b.date;
+    } else if (typeof b.date === 'string') {
+      dateB = new Date(b.date);
+    } else {
+      dateB = monthToDate(b.month);
+    }
     
     if (dateA.getTime() === dateB.getTime()) {
       if (a.type === 'interest' && b.type !== 'interest') return 1;
