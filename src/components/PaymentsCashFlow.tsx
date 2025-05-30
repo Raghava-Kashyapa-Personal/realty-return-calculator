@@ -1,23 +1,29 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
+import { Payment, IncomeItem, ProjectData } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
-import { Payment, ProjectData } from '@/types/project';
-import { fetchAllEntries, saveSinglePayment, savePayments, saveProjectData } from '@/services/firestoreService';
-import { Plus, Download, Upload, RefreshCw, Calculator, Copy, Save, Database, X } from 'lucide-react';
-import { format } from 'date-fns';
-import Papa from 'papaparse';
-import { PaymentsTable } from '@/components/payments/PaymentsTable';
 import { CashFlowAnalysis } from '@/components/CashFlowAnalysis';
-import { formatCurrency, formatNumber, parseCurrencyAmount, parseDate, monthToDate, dateToMonth } from '@/components/payments/utils';
+import { PaymentsTable } from '@/components/payments/PaymentsTable';
+import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2 } from 'lucide-react';
 import { exportToCsv } from '@/utils/csvExport';
+import {
+  formatCurrency,
+  formatNumber,
+  parseCurrencyAmount,
+  parseDate,
+  monthToDate,
+  dateToMonth
+} from '@/components/payments/utils';
 import { calculateDerivedProjectEndDate } from '@/utils/projectDateUtils';
+import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetchSession, sanitizePaymentData } from '@/services/firestoreService';
+import { db } from '@/firebaseConfig';
+import { doc, setDoc } from 'firebase/firestore';
+import { AITextImporter } from '@/components/AITextImporter';
+
+// Collection name for payments
+const PAYMENTS_COLLECTION = 'test'; // Using 'test' as specified in firestoreService.ts
 
 interface PaymentsCashFlowProps {
   projectData: ProjectData;
@@ -41,6 +47,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   const [editValues, setEditValues] = useState<any>({});
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [isAIImportOpen, setIsAIImportOpen] = useState(false);
   const [interestRate, setInterestRate] = useState<number>(projectData.annualInterestRate || 12);
   const [newPayment, setNewPayment] = useState<Partial<Payment>>({
     month: dateToMonth(new Date()),
@@ -64,35 +71,28 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     setIsFetching(true);
     try {
       console.log('Manually fetching all database entries');
-      // Fetch all entries first
-      const { entries } = await fetchAllEntries(100);
-      
-      // Filter entries by checking if they were created in this session
-      // Since sessionId might not be directly on the Payment type, we need a more flexible approach
-      const sessionEntries = sessionId 
-        ? entries.filter(entry => {
-            // Check various properties that might contain session information
-            return (entry as any).sessionId === sessionId || 
-                   (entry as any).session === sessionId || 
-                   (entry as any).projectId === sessionId;
-          })
-        : entries;
+      // If sessionId is provided, fetch only for that session
+      const { entries } = await fetchAllEntries(100, sessionId);
 
-      if (sessionEntries && sessionEntries.length > 0) {
-        const entriesWithIds = sessionEntries.map(entry => ({
-          ...entry,
-          id: entry.id || `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-        }));
-
-        // Check for duplicates against existing payments
+      if (entries && entries.length > 0) {
+        // Create a set of existing IDs to avoid duplicates
         const existingIds = new Set(projectData.payments.map(p => p.id));
-        const existingHashes = new Set(projectData.payments.map(p => `${p.month}-${p.amount}-${p.description}`));
         
-        // Filter out duplicates by ID or content hash
-        const newPayments = entriesWithIds.filter(p => {
-          const hash = `${p.month}-${p.amount}-${p.description}`;
-          return p.id && !existingIds.has(p.id) && !existingHashes.has(hash);
-        });
+        // Also create a set of content hashes to avoid duplicate content
+        const existingContentHashes = new Set(projectData.payments.map(p => 
+          `${p.month}-${p.amount}-${p.description || ''}`
+        ));
+
+        // Process entries with stable IDs and filter out duplicates
+        const newPayments = entries
+          .filter(entry => {
+            const contentHash = `${entry.month}-${entry.amount}-${entry.description || ''}`;
+            return (!entry.id || !existingIds.has(entry.id)) && !existingContentHashes.has(contentHash);
+          })
+          .map(entry => ({
+            ...entry,
+            id: entry.id || generateStableId(entry)
+          }));
 
         if (newPayments.length > 0) {
           console.log('Adding entries from database:', newPayments.length);
@@ -116,253 +116,129 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
-  // Reset state when component mounts to prevent data leakage between sessions
-  useEffect(() => {
-    // Force clear payments on initial mount to prevent stale data
-    updatePayments([]);
-    // Clear any session flags from previous runs
-    localStorage.removeItem('last-active-session');
-  }, []); // Empty dependency array means this runs once on mount
+  // Track if we've already loaded data for this session to prevent infinite loops
+  const [loadedSessions, setLoadedSessions] = useState<Set<string>>(new Set());
 
-  // Auto-load data when sessionId changes
+  // Generate a stable ID for a payment entry
+  const generateStableId = (entry: Payment) => {
+    const descriptionPart = entry.description ? entry.description.substring(0, 10) : 'no-desc';
+    return `entry-${entry.month}-${entry.amount}-${descriptionPart}`.replace(/\s+/g, '-');
+  };
+  
+  // Only fetch data for existing sessions
+  const fetchDataFromFirestore = async () => {
+    if (!sessionId) return;
+    
+    try {
+      console.log(`Auto-fetching database entries for session: ${sessionId}`);
+      const { entries } = await fetchAllEntries(50, sessionId);
+
+      if (entries && entries.length > 0) {
+        // Create a set of existing IDs to avoid duplicates
+        const existingIds = new Set(projectData.payments.map(p => p.id));
+        
+        // Also create a set of content hashes to avoid duplicate content
+        const existingContentHashes = new Set(projectData.payments.map(p => 
+          `${p.month}-${p.amount}-${p.description || ''}`
+        ));
+
+        // Only add entries that don't already exist (by ID or content)
+        const entriesWithIds = entries
+          .filter(entry => {
+            const contentHash = `${entry.month}-${entry.amount}-${entry.description || ''}`;
+            return (!entry.id || !existingIds.has(entry.id)) && !existingContentHashes.has(contentHash);
+          })
+          .map(entry => ({
+            ...entry,
+            // Use a stable ID generation that doesn't rely on current timestamp
+            id: entry.id || generateStableId(entry)
+          }));
+
+        if (entriesWithIds.length > 0) {
+          // Combine with existing payments, avoiding duplicates
+          updatePayments([...projectData.payments, ...entriesWithIds]);
+          console.log(`Loaded ${entriesWithIds.length} new entries for session ${sessionId}`);
+        } else {
+          console.log('No new entries to add (all already exist)');
+        }
+      } else {
+        console.log(`No entries found for session ${sessionId}`);
+        // Don't clear existing payments if no entries are found
+        // Only clear if this is the first load
+        if (projectData.payments.length === 0) {
+          updatePayments([]);
+        }
+      }
+    } catch (error) {
+      console.error('Error auto-fetching data from Firestore:', error);
+      // On error, don't clear existing data
+    }
+  };
+
+  // Auto-load data when sessionId changes, but only once per session
   useEffect(() => {
-    if (!sessionId) {
-      // If no sessionId, ensure payments are cleared
-      updatePayments([]);
-      return;
-    }
-    
-    console.log(`Session ID changed to: ${sessionId}, loading data...`);
-    
-    // CRITICAL FIX: First, try to load from localStorage cache to prevent flash of empty content
-    // This ensures we always have data to display immediately
-    const cachedData = localStorage.getItem(`session-data-${sessionId}`);
-    if (cachedData) {
-      try {
-        const parsedData = JSON.parse(cachedData);
-        console.log(`IMMEDIATE LOAD: Found ${parsedData.length} cached entries for session ${sessionId}`);
-        // IMPORTANT: Update payments state immediately with cached data
-        updatePayments(parsedData);
-      } catch (e) {
-        console.error('Error parsing cached session data:', e);
-      }
-    }
-    
-    // Track session changes to prevent data leakage between sessions
-    const lastActiveSession = localStorage.getItem('last-active-session');
-    if (lastActiveSession !== sessionId) {
-      console.log(`Session changed from ${lastActiveSession || 'none'} to ${sessionId}`);
-      // Only reset if we don't have cached data
-      if (!cachedData) {
-        updatePayments([]);
-      }
-      // Store current session as last active
-      localStorage.setItem('last-active-session', sessionId);
-    }
-    
+    if (!sessionId) return;
+
     // Check if this is a new session that should start empty
-    const isNewSession = sessionId.includes('new') || 
-                         sessionId.includes('create') ||
-                         localStorage.getItem(`session-${sessionId}-is-new`) === 'true' ||
-                         !localStorage.getItem(`session-${sessionId}-initialized`);
-    
+    const isNewSession = sessionId.includes('new-') ||
+                         sessionStorage.getItem(`session-${sessionId}-is-new`) === 'true' ||
+                         sessionId.startsWith('session-') && sessionId.includes('new');
+
     if (isNewSession) {
-      console.log('New session detected, ensuring empty state');
+      console.log('New session detected, starting with empty payments');
       // Clear any existing payments for new sessions
       updatePayments([]);
-      // Mark this session as initialized
-      localStorage.setItem(`session-${sessionId}-initialized`, 'true');
-      // Store empty array in cache
-      localStorage.setItem(`session-data-${sessionId}`, JSON.stringify([]));
-      // Skip data fetching for new sessions
+      sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
       return;
     }
     
-    // Only fetch data for existing sessions
-    const fetchDataFromFirestore = async () => {
-      try {
-        // CRITICAL: Save current state before fetching to prevent data loss
-        const currentPayments = [...projectData.payments];
-        console.log(`Auto-fetching database entries for session: ${sessionId} (current entries: ${currentPayments.length})`);
-        
-        // IMPORTANT: Set a flag to indicate we're fetching data
-        // This prevents multiple fetches from running simultaneously
-        const fetchingKey = `fetching-${sessionId}`;
-        if (localStorage.getItem(fetchingKey) === 'true') {
-          console.log('Already fetching data for this session, skipping duplicate fetch');
-          return;
-        }
-        localStorage.setItem(fetchingKey, 'true');
-        
-        try {
-          // Fetch all entries first
-          const { entries } = await fetchAllEntries(50);
-          
-          // Filter entries by session ID using the same approach as the manual fetch
-          const sessionEntries = entries.filter(entry => {
-            // Check various properties that might contain session information
-            return (entry as any).sessionId === sessionId || 
-                   (entry as any).session === sessionId || 
-                   (entry as any).projectId === sessionId;
-          });
+    // Only fetch if we haven't loaded this session yet
+    if (!loadedSessions.has(sessionId)) {
+      fetchDataFromFirestore();
+      // Mark this session as loaded to prevent infinite loops
+      setLoadedSessions(prev => new Set([...prev, sessionId]));
+    }
+  }, [sessionId, projectData.payments, loadedSessions]);
 
-          console.log(`Found ${sessionEntries.length} entries in Firestore for session ${sessionId}`);
-
-          // IMPORTANT: If we have entries in Firestore, process them
-          if (sessionEntries && sessionEntries.length > 0) {
-            const entriesWithIds = sessionEntries.map(entry => ({
-              ...entry,
-              id: entry.id || `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-            }));
-            
-            // CRITICAL FIX: Always keep what we already have in the UI
-            // This prevents entries from disappearing
-            let combinedPayments = [...currentPayments];
-            
-            // Add any entries from Firestore that we don't already have
-            const existingHashes = new Set(currentPayments.map(p => `${p.month}-${p.amount}-${p.description}`));
-            
-            const newUniqueEntries = entriesWithIds.filter(p => {
-              const hash = `${p.month}-${p.amount}-${p.description}`;
-              return !existingHashes.has(hash);
-            });
-            
-            // Only add new entries if we found any
-            if (newUniqueEntries.length > 0) {
-              combinedPayments = [...currentPayments, ...newUniqueEntries];
-              console.log(`Added ${newUniqueEntries.length} new entries from Firestore, total: ${combinedPayments.length}`);
-            } else {
-              console.log('No new entries found in Firestore');
-            }
-            
-            // IMPORTANT: Only update UI if we have more data than before
-            // This prevents entries from disappearing
-            if (combinedPayments.length >= currentPayments.length) {
-              updatePayments(combinedPayments);
-              
-              // Store in localStorage for persistence
-              localStorage.setItem(`session-data-${sessionId}`, JSON.stringify(combinedPayments));
-              console.log(`Saved ${combinedPayments.length} entries to localStorage for session ${sessionId}`);
-            } else {
-              console.log(`Keeping ${currentPayments.length} existing entries instead of ${combinedPayments.length} from Firestore`);
-            }
-            
-            // Set a flag to indicate we've successfully loaded data
-            localStorage.setItem(`session-${sessionId}-loaded`, 'true');
-          } else {
-            // No entries found in Firestore, try localStorage
-            const savedData = localStorage.getItem(`session-data-${sessionId}`);
-            
-            if (savedData) {
-              try {
-                const parsedData = JSON.parse(savedData);
-                console.log(`No Firestore data, using ${parsedData.length} cached entries for session ${sessionId}`);
-                
-                // CRITICAL FIX: Only update if cached data has more entries
-                // This prevents entries from disappearing
-                if (parsedData.length > currentPayments.length) {
-                  updatePayments(parsedData);
-                  console.log(`Updated UI with ${parsedData.length} cached entries`);
-                } else {
-                  console.log(`Keeping ${currentPayments.length} existing entries instead of ${parsedData.length} from cache`);
-                }
-              } catch (e) {
-                console.error('Error parsing saved session data:', e);
-              }
-            } else {
-              console.log(`No entries found for session ${sessionId} in Firestore or localStorage`);
-              
-              // CRITICAL: Only clear payments if we have no data at all
-              if (currentPayments.length === 0) {
-                updatePayments([]);
-              } else {
-                console.log(`Keeping ${currentPayments.length} existing entries in UI`);
-              }
-            }
-          }
-        } finally {
-          // Always clear the fetching flag when done
-          localStorage.removeItem(fetchingKey);
-        }
-      } catch (error) {
-        console.error('Error auto-fetching data from Firestore:', error);
-        
-        // On error, try to load from localStorage instead of clearing
-        const savedData = localStorage.getItem(`session-data-${sessionId}`);
-        if (savedData) {
-          try {
-            const parsedData = JSON.parse(savedData);
-            console.log(`Error recovery: Using ${parsedData.length} cached entries`);
-            
-            // CRITICAL FIX: Only update if we have no data or if cached data has more entries
-            const currentPayments = projectData.payments || [];
-            if (currentPayments.length === 0 || parsedData.length > currentPayments.length) {
-              updatePayments(parsedData);
-            }
-          } catch (e) {
-            console.error('Error parsing saved session data during recovery:', e);
-          }
-        } else {
-          // Only clear if we have no cached data AND no current data
-          const currentPayments = projectData.payments || [];
-          if (currentPayments.length === 0) {
-            console.log('No cached data available for recovery, clearing payments');
-            updatePayments([]);
-          }
-        }
-      }
-    };
-
-    fetchDataFromFirestore();
-  }, [sessionId, updatePayments]); // Run whenever sessionId changes
-  
   // Add listener for session refresh events
   useEffect(() => {
     const handleSessionRefresh = () => {
-      if (!sessionId) return;
+      if (!sessionId) {
+        toast({ title: 'No Session', description: 'Please select a session first.', variant: 'destructive' });
+        return;
+      }
       console.log('Session refresh event received, reloading data');
       
       // Force reload data for current session
       const fetchLatestData = async () => {
+        setIsFetching(true);
         try {
-          // Check if this is a new session that should start empty
-          const isNewSession = sessionId.includes('new') || 
-                              sessionId.includes('create') ||
-                              localStorage.getItem(`session-${sessionId}-is-new`) === 'true' ||
-                              !localStorage.getItem(`session-${sessionId}-initialized`);
+          const { entries } = await fetchSession(sessionId);
           
-          if (isNewSession) {
-            console.log('New session detected during refresh, ensuring empty state');
-            updatePayments([]);
-            localStorage.setItem(`session-${sessionId}-initialized`, 'true');
-            return;
-          }
-          
-          // For existing sessions, fetch and filter data
-          const { entries } = await fetchAllEntries(50);
-          
-          // Filter entries by session ID
-          const sessionEntries = entries.filter(entry => {
-            return (entry as any).sessionId === sessionId || 
-                   (entry as any).session === sessionId || 
-                   (entry as any).projectId === sessionId;
-          });
-          
-          if (sessionEntries && sessionEntries.length > 0) {
-            const entriesWithIds = sessionEntries.map(entry => ({
+          if (entries && entries.length > 0) {
+            // Process entries with stable IDs
+            const processedEntries = entries.map(entry => ({
               ...entry,
-              id: entry.id || `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+              // Use our stable ID generation helper
+              id: entry.id || generateStableId(entry)
             }));
-            updatePayments(entriesWithIds);
-            console.log(`Refreshed with ${entriesWithIds.length} entries for session ${sessionId}`);
+            
+            // Replace all payments with the refreshed data
+            updatePayments(processedEntries);
+            toast({ title: 'Data Refreshed', description: `Loaded ${entries.length} entries from session ${sessionId}` });
+            
+            // Update the loaded sessions set to include this session
+            setLoadedSessions(prev => new Set([...prev, sessionId]));
           } else {
-            console.log(`No entries found during refresh for session ${sessionId}`);
+            toast({ title: 'No Data', description: 'No entries found for this session.' });
+            // Clear payments on explicit refresh if no data found
             updatePayments([]);
           }
         } catch (error) {
           console.error('Error refreshing session data:', error);
-          // On error, ensure we don't display stale data
-          updatePayments([]);
+          toast({ title: 'Error', description: 'Failed to refresh session data.', variant: 'destructive' });
+        } finally {
+          setIsFetching(false);
         }
       };
       
@@ -372,15 +248,6 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     window.addEventListener('refresh-sessions', handleSessionRefresh);
     return () => window.removeEventListener('refresh-sessions', handleSessionRefresh);
   }, [sessionId, updatePayments]);
-  
-  // Add a special effect to handle direct URL navigation to new sessions
-  useEffect(() => {
-    // This helps with direct URL navigation to new sessions
-    if (sessionId && window.location.href.includes('new')) {
-      console.log('URL contains "new", marking session as new');
-      localStorage.setItem(`session-${sessionId}-is-new`, 'true');
-    }
-  }, [sessionId]);
 
   const projectEndDate = useMemo(() => {
     const allNonInterestEntries = [
@@ -581,8 +448,20 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           type = 'return';
         }
 
+        const paymentEntry: Payment = {
+          id: '', // Temporary ID, will be replaced
+          month,
+          amount: type === 'payment' ? -Math.abs(amount) : Math.abs(amount),
+          description,
+          type,
+          date: entryDate
+        };
+        
+        // Use our consistent ID generation helper
+        paymentEntry.id = generateStableId(paymentEntry);
+        
         newPayments.push({
-          id: `imported-${Date.now()}-${i}`,
+          ...paymentEntry,
           month,
           amount: type === 'payment' ? -Math.abs(amount) : Math.abs(amount),
           description,
@@ -646,19 +525,30 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     
     const updatedPayment: Payment = {
       ...editValues,
-      id: editingPayment,
+      id: editingPayment, // Keep the original ID to ensure we're updating, not creating
       date,
       month: dateToMonth(date),
       amount: editValues.type === 'payment' ? -Math.abs(Number(editValues.amount)) : Math.abs(Number(editValues.amount)),
     };
 
+    // Update the payment in the local state
     const updatedPayments = projectData.payments.map(p => p.id === editingPayment ? updatedPayment : p);
     updatePayments(updatedPayments);
 
     // Save to Firestore if we have a session ID
     if (sessionId) {
       try {
-        await saveSinglePayment(updatedPayment, sessionId);
+        // Find today's document and update the specific payment within it
+        const { entries } = await fetchSession(sessionId);
+        
+        // Find and replace the payment with matching ID
+        const updatedEntries = entries.map(entry => 
+          entry.id === editingPayment ? sanitizePaymentData(updatedPayment) : entry
+        );
+        
+        // Save the updated entries back to Firestore
+        await savePayments(updatedEntries, sessionId);
+        
         toast({ description: "Entry updated and saved to the database." });
       } catch (firestoreError) {
         console.error('Error saving to Firestore:', firestoreError);
@@ -681,13 +571,16 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
                    (typeof newPayment.date === 'string' ? new Date(newPayment.date) : new Date());
     
     const paymentToAdd: Payment = {
-      id: `manual-${Date.now()}`,
+      id: '', // Temporary ID, will be replaced
       month: dateToMonth(dateObj),
       amount: newPayment.type === 'payment' ? -Math.abs(Number(newPayment.amount)) : Math.abs(Number(newPayment.amount)),
       description: newPayment.description,
       date: dateObj,
       type: newPayment.type as 'payment' | 'return',
     };
+    
+    // Use our consistent ID generation helper
+    paymentToAdd.id = generateStableId(paymentToAdd);
 
     // Update UI with new payment
     updatePayments([...projectData.payments, paymentToAdd]);
@@ -723,7 +616,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     });
   };
 
-  const removePayment = (id: string) => {
+  const removePayment = async (id: string) => {
     if (id.startsWith('return_')) {
       const returnIndex = parseInt(id.split('_')[1], 10);
       if (!isNaN(returnIndex)) {
@@ -731,13 +624,42 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         updateProjectData({ rentalIncome: updatedReturns });
       }
     } else {
+      // Update local state by removing the payment
       updatePayments(projectData.payments.filter(payment => payment.id !== id));
       
-      // TODO: Add code to remove from Firestore if needed
+      // Remove from Firestore if we have a session ID
       if (sessionId) {
-        // This would require a new function in firestoreService.ts
-        // await deletePayment(id, sessionId);
-        console.log(`Payment ${id} removed from UI. Server deletion not implemented.`);
+        try {
+          // Fetch the current entries
+          const { entries } = await fetchSession(sessionId);
+          
+          // Filter out the payment with the matching ID
+          const updatedEntries = entries.filter(entry => entry.id !== id);
+          
+          // Process entries to ensure they all have stable IDs before saving
+          const processedEntries = updatedEntries.map(entry => ({
+            ...entry,
+            id: entry.id || generateStableId(entry)
+          }));
+          
+          // Save the updated entries back to Firestore, replacing the entire document
+          // This prevents the duplication issue
+          await setDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
+            entries: processedEntries,
+            updatedAt: new Date(),
+            count: processedEntries.length,
+            sessionId: sessionId
+          });
+          
+          toast({ description: "Entry deleted from database." });
+        } catch (error) {
+          console.error(`Error removing payment ${id} from Firestore:`, error);
+          toast({ 
+            title: "Error", 
+            description: "Failed to delete entry from database. It was removed locally only.", 
+            variant: "destructive" 
+          });
+        }
       }
     }
   };
@@ -775,6 +697,9 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             </Button>
             <Button onClick={() => setIsImportOpen(true)} variant="outline" size="sm" className="h-8 gap-1">
               <Upload className="h-3.5 w-3.5" /> Import CSV
+            </Button>
+            <Button onClick={() => setIsAIImportOpen(true)} variant="outline" size="sm" className="h-8 gap-1">
+              <Wand2 className="h-3.5 w-3.5" /> AI Import
             </Button>
             <Button onClick={saveAllToFirestore} variant="outline" size="sm" className="h-8 gap-1">
               <Save className="h-3.5 w-3.5" /> Save All
@@ -851,6 +776,16 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             </Card>
           </div>
         </div>
+      )}
+      
+      {isAIImportOpen && (
+        <AITextImporter 
+          onImport={async (csvData) => {
+            await parseCashFlowData(csvData);
+            setIsAIImportOpen(false);
+          }}
+          onClose={() => setIsAIImportOpen(false)}
+        />
       )}
     </div>
   );

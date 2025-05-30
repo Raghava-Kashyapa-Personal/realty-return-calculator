@@ -142,7 +142,7 @@ export const saveSinglePayment = async (payment: Payment, projectId?: string): P
  * @param payment The payment to sanitize
  * @returns Sanitized payment object
  */
-const sanitizePaymentData = (payment: Payment): any => {
+export const sanitizePaymentData = (payment: Payment): any => {
   const sanitized: any = {};
   
   // Only include defined properties

@@ -1,0 +1,46 @@
+Buyer: Hey, can you walk me through the payment schedule for the flat?
+
+Sales Rep: Sure! The first payment is in May 2025 — that's ₹14,60,461, due on booking.
+
+Buyer: Got it. What's next?
+
+Sales Rep: Still in May 2025, there's a second payment of ₹29,20,922 due on agreement.
+
+Buyer: So two payments in the same month?
+
+Sales Rep: Yes, that's correct. Then in June 2025, another ₹29,20,922 is due on excavation and levelling.
+
+Buyer: Okay. What comes after that?
+
+Sales Rep: In July 2025, ₹20,44,645 is due on completion of the foundation.
+
+Buyer: Alright.
+
+Sales Rep: The next payment is in November 2025, again ₹20,44,645, due on completion of the lower basement roof slab casting.
+
+Buyer: That sounds like a big milestone.
+
+Sales Rep: It is. Then in January 2026, another ₹20,44,645 is due on completion of the upper basement roof slab casting.
+
+Buyer: Okay, the payments are well spaced so far.
+
+Sales Rep: Right. April 2026 brings another ₹20,44,645 payment on completion of the ground floor roof slab casting.
+
+Buyer: And after that?
+
+Sales Rep: July 2026 — ₹20,44,645 on the 1st floor roof slab casting. Then in October 2026, the same amount again for the 2nd floor.
+
+Buyer: I’m sensing a pattern here!
+
+Sales Rep: You're spot on! Then in March 2027, ₹20,44,645 is due on completion of the 3rd floor roof slab casting, and in June 2027, the same for the 4th floor.
+
+Buyer: Wow, that’s a long schedule.
+
+Sales Rep: We try to keep it aligned with construction milestones. In August 2027, a smaller amount — ₹14,60,461 — is due on completion of brick work.
+
+Buyer: Almost at the end then?
+
+Sales Rep: Almost. Then October 2027 brings another ₹14,60,461 on completion of plastering, and the final payment is ₹11,68,369 in December 2027, on completion of flooring.
+
+Buyer: Thanks, this really helps me understand the breakdown.
+
