@@ -1,12 +1,14 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Payment, IncomeItem, ProjectData } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
 import { CashFlowAnalysis } from '@/components/CashFlowAnalysis';
 import { PaymentsTable } from '@/components/payments/PaymentsTable';
-import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2 } from 'lucide-react';
+import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2, Loader2 } from 'lucide-react';
 import { exportToCsv } from '@/utils/csvExport';
 import {
   formatCurrency,
@@ -43,6 +45,8 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   sessionId
 }) => {
   const [csvData, setCsvData] = useState('');
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const [editingPayment, setEditingPayment] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<any>({});
   const [isAddingNew, setIsAddingNew] = useState(false);
@@ -123,6 +127,24 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   const generateStableId = (entry: Payment) => {
     const descriptionPart = entry.description ? entry.description.substring(0, 10) : 'no-desc';
     return `entry-${entry.month}-${entry.amount}-${descriptionPart}`.replace(/\s+/g, '-');
+  };
+  
+  // Helper function to read a file as text
+  const readFileAsText = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          resolve(e.target.result as string);
+        } else {
+          reject(new Error('Failed to read file'));
+        }
+      };
+      reader.onerror = (e) => {
+        reject(new Error('File reading error'));
+      };
+      reader.readAsText(file);
+    });
   };
   
   // Only fetch data for existing sessions
@@ -754,22 +776,58 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Textarea
-                  value={csvData}
-                  onChange={(e) => setCsvData(e.target.value)}
-                  placeholder="Format: Date,Amount,Description&#10;May-2025,-1,46,000,Booking Payment&#10;Jun-2026,25000,Monthly Rent"
-                  rows={5}
-                  className="font-mono text-xs"
-                />
+                <div className="space-y-2">
+                  <Label htmlFor="csv-file">Select a CSV file</Label>
+                  <Input
+                    id="csv-file"
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setCsvFile(file);
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Format: Date,Amount,Description<br/>
+                    Example: May-2025,-146000,Booking Payment<br/>
+                    Example: Jun-2026,25000,Monthly Rent
+                  </p>
+                </div>
                 <div className="flex justify-end">
                   <Button
                     onClick={async () => {
-                      await parseCashFlowData(csvData);
-                      setIsImportOpen(false);
+                      if (csvFile) {
+                        setIsUploading(true);
+                        try {
+                          const text = await readFileAsText(csvFile);
+                          await parseCashFlowData(text);
+                          setIsImportOpen(false);
+                          setCsvFile(null);
+                        } catch (error) {
+                          console.error('Error reading CSV file:', error);
+                          toast({ 
+                            title: "Error", 
+                            description: "Failed to read CSV file. Please check the file format.", 
+                            variant: "destructive" 
+                          });
+                        } finally {
+                          setIsUploading(false);
+                        }
+                      }
                     }}
-                    disabled={!csvData.trim()}
+                    disabled={!csvFile || isUploading}
                   >
-                    <Upload className="w-4 h-4 mr-2" /> Import Data
+                    {isUploading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Processing
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 mr-2" /> Import Data
+                      </>
+                    )}
                   </Button>
                 </div>
               </CardContent>
