@@ -20,6 +20,11 @@ export const parseCurrencyAmount = (amountStr: string): number => {
 };
 
 export const parseDate = (dateStr: string): number => {
+  // Skip header row value 'date'
+  if (dateStr.toLowerCase() === 'date') {
+    return -1; // Return invalid month number
+  }
+  
   // If it's already a number, return it
   if (!isNaN(Number(dateStr))) {
     return Number(dateStr);
@@ -65,10 +70,9 @@ export const parseDate = (dateStr: string): number => {
       }
       
       if (month >= 1 && month <= 12 && !isNaN(year)) {
-        // Calculate the actual month number based on the date
-        // Month is 0-indexed in JavaScript Date
-        const baseDate = new Date(year, month - 1, 1);
-        return (baseDate.getFullYear() * 12) + baseDate.getMonth() + 1;
+        // Calculate months since Jan 2024 (our reference point)
+        const monthsSinceJan2024 = ((year - 2024) * 12) + (month - 1);
+        return monthsSinceJan2024;
       }
     }
     
@@ -94,17 +98,41 @@ export const parseDate = (dateStr: string): number => {
 };
 
 export const monthToDate = (month: number): Date => {
+  // Input validation
+  if (typeof month !== 'number' || isNaN(month)) {
+    console.error('Invalid month number passed to monthToDate:', month);
+    return new Date(); // Return current date as fallback
+  }
+  
+  // For negative months or months < 0, we need special handling
+  if (month < 0) {
+    console.warn('Negative month number in monthToDate:', month, 'using 0 instead');
+    month = 0;
+  }
+  
+  // Debug
+  console.log(`monthToDate converting month ${month} to date`);
+  
   // Simple direct calculation: month 0 = Jan 2024
   const year = 2024 + Math.floor(month / 12);
   const monthIndex = month % 12;
   
-  return new Date(year, monthIndex, 1);
+  const result = new Date(year, monthIndex, 1);
+  console.log(`monthToDate result: ${result.toISOString()} (year: ${year}, month: ${monthIndex})`);
+  return result;
 };
 
 export const dateToMonth = (date: Date): number => {
+  // Make sure we have a valid Date object
+  if (!(date instanceof Date) || isNaN(date.getTime())) {
+    console.error('Invalid date passed to dateToMonth:', date);
+    return 0; // Return a safe default
+  }
+  
   // Simple direct conversion: Jan 2024 = month 0
   const year = date.getFullYear();
   const month = date.getMonth(); // 0-based month index
   
+  // Calculate relative to 2024 base year
   return (year - 2024) * 12 + month;
 };

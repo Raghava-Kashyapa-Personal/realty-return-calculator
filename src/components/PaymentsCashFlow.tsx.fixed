@@ -6,7 +6,7 @@ import { Payment, IncomeItem, ProjectData } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
 import { CashFlowAnalysis } from '@/components/CashFlowAnalysis';
 import { PaymentsTable } from '@/components/payments/PaymentsTable';
-import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2 } from 'lucide-react';
+import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download } from 'lucide-react';
 import { exportToCsv } from '@/utils/csvExport';
 import {
   formatCurrency,
@@ -17,13 +17,7 @@ import {
   dateToMonth
 } from '@/components/payments/utils';
 import { calculateDerivedProjectEndDate } from '@/utils/projectDateUtils';
-import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetchSession, sanitizePaymentData } from '@/services/firestoreService';
-import { db } from '@/firebaseConfig';
-import { doc, setDoc } from 'firebase/firestore';
-import { AITextImporter } from '@/components/AITextImporter';
-
-// Collection name for payments
-const PAYMENTS_COLLECTION = 'test'; // Using 'test' as specified in firestoreService.ts
+import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries } from '@/services/firestoreService';
 
 interface PaymentsCashFlowProps {
   projectData: ProjectData;
@@ -47,7 +41,6 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   const [editValues, setEditValues] = useState<any>({});
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
-  const [isAIImportOpen, setIsAIImportOpen] = useState(false);
   const [interestRate, setInterestRate] = useState<number>(projectData.annualInterestRate || 12);
   const [newPayment, setNewPayment] = useState<Partial<Payment>>({
     month: dateToMonth(new Date()),
@@ -75,24 +68,13 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       const { entries } = await fetchAllEntries(100, sessionId);
 
       if (entries && entries.length > 0) {
-        // Create a set of existing IDs to avoid duplicates
-        const existingIds = new Set(projectData.payments.map(p => p.id));
-        
-        // Also create a set of content hashes to avoid duplicate content
-        const existingContentHashes = new Set(projectData.payments.map(p => 
-          `${p.month}-${p.amount}-${p.description || ''}`
-        ));
+        const entriesWithIds = entries.map(entry => ({
+          ...entry,
+          id: entry.id || `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        }));
 
-        // Process entries with stable IDs and filter out duplicates
-        const newPayments = entries
-          .filter(entry => {
-            const contentHash = `${entry.month}-${entry.amount}-${entry.description || ''}`;
-            return (!entry.id || !existingIds.has(entry.id)) && !existingContentHashes.has(contentHash);
-          })
-          .map(entry => ({
-            ...entry,
-            id: entry.id || generateStableId(entry)
-          }));
+        const existingIds = new Set(projectData.payments.map(p => p.id));
+        const newPayments = entriesWithIds.filter(p => p.id && !existingIds.has(p.id));
 
         if (newPayments.length > 0) {
           console.log('Adding entries from database:', newPayments.length);
@@ -116,129 +98,73 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
-  // Track if we've already loaded data for this session to prevent infinite loops
-  const [loadedSessions, setLoadedSessions] = useState<Set<string>>(new Set());
-
-  // Generate a stable ID for a payment entry
-  const generateStableId = (entry: Payment) => {
-    const descriptionPart = entry.description ? entry.description.substring(0, 10) : 'no-desc';
-    return `entry-${entry.month}-${entry.amount}-${descriptionPart}`.replace(/\s+/g, '-');
-  };
-  
-  // Only fetch data for existing sessions
-  const fetchDataFromFirestore = async () => {
-    if (!sessionId) return;
-    
-    try {
-      console.log(`Auto-fetching database entries for session: ${sessionId}`);
-      const { entries } = await fetchAllEntries(50, sessionId);
-
-      if (entries && entries.length > 0) {
-        // Create a set of existing IDs to avoid duplicates
-        const existingIds = new Set(projectData.payments.map(p => p.id));
-        
-        // Also create a set of content hashes to avoid duplicate content
-        const existingContentHashes = new Set(projectData.payments.map(p => 
-          `${p.month}-${p.amount}-${p.description || ''}`
-        ));
-
-        // Only add entries that don't already exist (by ID or content)
-        const entriesWithIds = entries
-          .filter(entry => {
-            const contentHash = `${entry.month}-${entry.amount}-${entry.description || ''}`;
-            return (!entry.id || !existingIds.has(entry.id)) && !existingContentHashes.has(contentHash);
-          })
-          .map(entry => ({
-            ...entry,
-            // Use a stable ID generation that doesn't rely on current timestamp
-            id: entry.id || generateStableId(entry)
-          }));
-
-        if (entriesWithIds.length > 0) {
-          // Combine with existing payments, avoiding duplicates
-          updatePayments([...projectData.payments, ...entriesWithIds]);
-          console.log(`Loaded ${entriesWithIds.length} new entries for session ${sessionId}`);
-        } else {
-          console.log('No new entries to add (all already exist)');
-        }
-      } else {
-        console.log(`No entries found for session ${sessionId}`);
-        // Don't clear existing payments if no entries are found
-        // Only clear if this is the first load
-        if (projectData.payments.length === 0) {
-          updatePayments([]);
-        }
-      }
-    } catch (error) {
-      console.error('Error auto-fetching data from Firestore:', error);
-      // On error, don't clear existing data
-    }
-  };
-
-  // Auto-load data when sessionId changes, but only once per session
+  // Auto-load data when sessionId changes
   useEffect(() => {
     if (!sessionId) return;
-
+    
     // Check if this is a new session that should start empty
-    const isNewSession = sessionId.includes('new-') ||
+    const isNewSession = sessionId.includes('new-') || 
                          sessionStorage.getItem(`session-${sessionId}-is-new`) === 'true' ||
                          sessionId.startsWith('session-') && sessionId.includes('new');
-
+    
     if (isNewSession) {
       console.log('New session detected, starting with empty payments');
       // Clear any existing payments for new sessions
       updatePayments([]);
+      // Mark this session as no longer new after initial load
       sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
       return;
     }
     
-    // Only fetch if we haven't loaded this session yet
-    if (!loadedSessions.has(sessionId)) {
-      fetchDataFromFirestore();
-      // Mark this session as loaded to prevent infinite loops
-      setLoadedSessions(prev => new Set([...prev, sessionId]));
-    }
-  }, [sessionId, projectData.payments, loadedSessions]);
+    // Only fetch data for existing sessions
+    const fetchDataFromFirestore = async () => {
+      try {
+        console.log(`Auto-fetching database entries for session: ${sessionId}`);
+        const { entries } = await fetchAllEntries(50, sessionId);
 
+        if (entries && entries.length > 0) {
+          const entriesWithIds = entries.map(entry => ({
+            ...entry,
+            id: entry.id || `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+          }));
+          updatePayments(entriesWithIds);
+          console.log(`Loaded ${entries.length} entries for session ${sessionId}`);
+        } else {
+          console.log(`No entries found for session ${sessionId}`);
+          // Ensure payments are empty when no entries are found
+          updatePayments([]);
+        }
+      } catch (error) {
+        console.error('Error auto-fetching data from Firestore:', error);
+        // On error, ensure we don't display stale data
+        updatePayments([]);
+      }
+    };
+
+    fetchDataFromFirestore();
+  }, [sessionId, updatePayments]); // Run whenever sessionId changes
+  
   // Add listener for session refresh events
   useEffect(() => {
     const handleSessionRefresh = () => {
-      if (!sessionId) {
-        toast({ title: 'No Session', description: 'Please select a session first.', variant: 'destructive' });
-        return;
-      }
+      if (!sessionId) return;
       console.log('Session refresh event received, reloading data');
       
       // Force reload data for current session
       const fetchLatestData = async () => {
-        setIsFetching(true);
         try {
-          const { entries } = await fetchSession(sessionId);
-          
+          const { entries } = await fetchAllEntries(50, sessionId);
           if (entries && entries.length > 0) {
-            // Process entries with stable IDs
-            const processedEntries = entries.map(entry => ({
+            const entriesWithIds = entries.map(entry => ({
               ...entry,
-              // Use our stable ID generation helper
-              id: entry.id || generateStableId(entry)
+              id: entry.id || `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
             }));
-            
-            // Replace all payments with the refreshed data
-            updatePayments(processedEntries);
-            toast({ title: 'Data Refreshed', description: `Loaded ${entries.length} entries from session ${sessionId}` });
-            
-            // Update the loaded sessions set to include this session
-            setLoadedSessions(prev => new Set([...prev, sessionId]));
+            updatePayments(entriesWithIds);
           } else {
-            toast({ title: 'No Data', description: 'No entries found for this session.' });
-            // Clear payments on explicit refresh if no data found
             updatePayments([]);
           }
         } catch (error) {
           console.error('Error refreshing session data:', error);
-          toast({ title: 'Error', description: 'Failed to refresh session data.', variant: 'destructive' });
-        } finally {
-          setIsFetching(false);
         }
       };
       
@@ -448,20 +374,8 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           type = 'return';
         }
 
-        const paymentEntry: Payment = {
-          id: '', // Temporary ID, will be replaced
-          month,
-          amount: type === 'payment' ? -Math.abs(amount) : Math.abs(amount),
-          description,
-          type,
-          date: entryDate
-        };
-        
-        // Use our consistent ID generation helper
-        paymentEntry.id = generateStableId(paymentEntry);
-        
         newPayments.push({
-          ...paymentEntry,
+          id: `imported-${Date.now()}-${i}`,
           month,
           amount: type === 'payment' ? -Math.abs(amount) : Math.abs(amount),
           description,
@@ -525,30 +439,19 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     
     const updatedPayment: Payment = {
       ...editValues,
-      id: editingPayment, // Keep the original ID to ensure we're updating, not creating
+      id: editingPayment,
       date,
       month: dateToMonth(date),
       amount: editValues.type === 'payment' ? -Math.abs(Number(editValues.amount)) : Math.abs(Number(editValues.amount)),
     };
 
-    // Update the payment in the local state
     const updatedPayments = projectData.payments.map(p => p.id === editingPayment ? updatedPayment : p);
     updatePayments(updatedPayments);
 
     // Save to Firestore if we have a session ID
     if (sessionId) {
       try {
-        // Find today's document and update the specific payment within it
-        const { entries } = await fetchSession(sessionId);
-        
-        // Find and replace the payment with matching ID
-        const updatedEntries = entries.map(entry => 
-          entry.id === editingPayment ? sanitizePaymentData(updatedPayment) : entry
-        );
-        
-        // Save the updated entries back to Firestore
-        await savePayments(updatedEntries, sessionId);
-        
+        await saveSinglePayment(updatedPayment, sessionId);
         toast({ description: "Entry updated and saved to the database." });
       } catch (firestoreError) {
         console.error('Error saving to Firestore:', firestoreError);
@@ -571,16 +474,13 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
                    (typeof newPayment.date === 'string' ? new Date(newPayment.date) : new Date());
     
     const paymentToAdd: Payment = {
-      id: '', // Temporary ID, will be replaced
+      id: `manual-${Date.now()}`,
       month: dateToMonth(dateObj),
       amount: newPayment.type === 'payment' ? -Math.abs(Number(newPayment.amount)) : Math.abs(Number(newPayment.amount)),
       description: newPayment.description,
       date: dateObj,
       type: newPayment.type as 'payment' | 'return',
     };
-    
-    // Use our consistent ID generation helper
-    paymentToAdd.id = generateStableId(paymentToAdd);
 
     // Update UI with new payment
     updatePayments([...projectData.payments, paymentToAdd]);
@@ -616,7 +516,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     });
   };
 
-  const removePayment = async (id: string) => {
+  const removePayment = (id: string) => {
     if (id.startsWith('return_')) {
       const returnIndex = parseInt(id.split('_')[1], 10);
       if (!isNaN(returnIndex)) {
@@ -624,42 +524,13 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         updateProjectData({ rentalIncome: updatedReturns });
       }
     } else {
-      // Update local state by removing the payment
       updatePayments(projectData.payments.filter(payment => payment.id !== id));
       
-      // Remove from Firestore if we have a session ID
+      // TODO: Add code to remove from Firestore if needed
       if (sessionId) {
-        try {
-          // Fetch the current entries
-          const { entries } = await fetchSession(sessionId);
-          
-          // Filter out the payment with the matching ID
-          const updatedEntries = entries.filter(entry => entry.id !== id);
-          
-          // Process entries to ensure they all have stable IDs before saving
-          const processedEntries = updatedEntries.map(entry => ({
-            ...entry,
-            id: entry.id || generateStableId(entry)
-          }));
-          
-          // Save the updated entries back to Firestore, replacing the entire document
-          // This prevents the duplication issue
-          await setDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
-            entries: processedEntries,
-            updatedAt: new Date(),
-            count: processedEntries.length,
-            sessionId: sessionId
-          });
-          
-          toast({ description: "Entry deleted from database." });
-        } catch (error) {
-          console.error(`Error removing payment ${id} from Firestore:`, error);
-          toast({ 
-            title: "Error", 
-            description: "Failed to delete entry from database. It was removed locally only.", 
-            variant: "destructive" 
-          });
-        }
+        // This would require a new function in firestoreService.ts
+        // await deletePayment(id, sessionId);
+        console.log(`Payment ${id} removed from UI. Server deletion not implemented.`);
       }
     }
   };
@@ -697,9 +568,6 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             </Button>
             <Button onClick={() => setIsImportOpen(true)} variant="outline" size="sm" className="h-8 gap-1">
               <Upload className="h-3.5 w-3.5" /> Import CSV
-            </Button>
-            <Button onClick={() => setIsAIImportOpen(true)} variant="outline" size="sm" className="h-8 gap-1">
-              <Wand2 className="h-3.5 w-3.5" /> AI Import
             </Button>
             <Button onClick={saveAllToFirestore} variant="outline" size="sm" className="h-8 gap-1">
               <Save className="h-3.5 w-3.5" /> Save All
@@ -776,16 +644,6 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             </Card>
           </div>
         </div>
-      )}
-      
-      {isAIImportOpen && (
-        <AITextImporter 
-          onImport={async (csvData) => {
-            await parseCashFlowData(csvData);
-            setIsAIImportOpen(false);
-          }}
-          onClose={() => setIsAIImportOpen(false)}
-        />
       )}
     </div>
   );
