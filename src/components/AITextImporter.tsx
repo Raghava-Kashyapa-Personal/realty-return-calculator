@@ -6,12 +6,22 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Upload, X, Wand2, FileText, FileUp, Loader2 } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Upload, X, Wand2, FileText, FileUp, Loader2, AlertCircle, File } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+// Import mammoth for Word docs
+import mammoth from 'mammoth';
+
 
 interface AITextImporterProps {
   onImport: (csvData: string) => void;
   onClose: () => void;
+}
+
+interface ProcessFileResult {
+  text: string;
+  fileType: string;
+  fileName: string;
 }
 
 // Initialize the Google Generative AI with your API key
@@ -26,62 +36,328 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [activeTab, setActiveTab] = useState('paste');
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [fileInfo, setFileInfo] = useState<{type: string, name: string} | null>(null);
   const { toast } = useToast();
 
-  // Read and process the selected file
-  const readSelectedFile = async () => {
-    if (!selectedFile) {
-      toast({ title: "Error", description: "Please select a file to import.", variant: "destructive" });
-      return;
-    }
-    
+  // Process the selected file
+  const processFile = async (file: File): Promise<ProcessFileResult | null> => {
+    setFileError(null);
     setIsReadingFile(true);
+    
     try {
       let text = "";
-      const fileType = selectedFile.type;
-      const fileName = selectedFile.name.toLowerCase();
+      const fileType = file.type;
+      const fileName = file.name.toLowerCase();
+      const extension = fileName.split('.').pop() || '';
       
-      if (fileType === "text/plain" || fileName.endsWith(".txt")) {
+      console.log(`Processing file: ${fileName}, type: ${fileType}`);
+      
+      if (fileType === "text/plain" || extension === "txt") {
         // Handle text files
-        text = await readTextFile(selectedFile);
-      } else if (fileType === "application/pdf" || fileName.endsWith(".pdf")) {
-        // Handle PDF files - here we would need a PDF extraction library
-        // For now, we'll show an error message about needing to add PDF support
-        toast({ 
-          title: "PDF Support Coming Soon", 
-          description: "PDF parsing requires additional libraries. For now, please copy-paste the text content.", 
-          variant: "destructive" 
-        });
-        setIsReadingFile(false);
-        return;
-      } else if (fileType.includes("word") || fileName.endsWith(".doc") || fileName.endsWith(".docx") || fileName.endsWith(".rtf")) {
-        // Handle Word files - here we would need a Word extraction library
-        // For now, we'll show an error message about needing to add Word support
-        toast({ 
-          title: "Word Document Support Coming Soon", 
-          description: "Word document parsing requires additional libraries. For now, please copy-paste the text content.", 
-          variant: "destructive" 
-        });
-        setIsReadingFile(false);
-        return;
-      } else {
-        toast({ title: "Error", description: "Unsupported file type. Please use a .txt, .pdf, .doc, or .docx file.", variant: "destructive" });
-        setIsReadingFile(false);
-        return;
-      }
-      
-      if (text) {
-        setRawText(text);
-        setActiveTab("paste"); // Switch to paste tab to show the extracted content
-        toast({ title: "Success", description: `File content extracted from ${selectedFile.name}` });
-      } else {
-        toast({ title: "Error", description: "Failed to extract text from the file or the file was empty.", variant: "destructive" });
+        text = await readTextFile(file);
+        return { text, fileType: 'text', fileName };
+      } 
+      else if (fileType === "application/pdf" || extension === "pdf") {
+        // Extract text from PDF using pdf-parse library
+        text = await extractPdfText(file);
+        return { text, fileType: 'pdf', fileName };
+      } 
+      else if (fileType.includes("word") || ["doc", "docx", "rtf"].includes(extension)) {
+        // Extract text from Word document using mammoth
+        text = await extractWordText(file);
+        return { text, fileType: 'word', fileName };
+      } 
+      else {
+        throw new Error(`Unsupported file type: ${fileType}. Please use a text, PDF, or Word file.`);
       }
     } catch (error) {
-      console.error('Error reading file:', error);
-      toast({ title: "Error", description: "Failed to read the selected file.", variant: "destructive" });
+      console.error('Error processing file:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error processing file';
+      setFileError(errorMessage);
+      return null;
     } finally {
       setIsReadingFile(false);
+    }
+  };
+  
+  // Extract text from PDF using a specialized approach for browser environment
+  const extractPdfText = async (file: File): Promise<string> => {
+    try {
+      toast({
+        title: "Processing PDF",
+        description: "Attempting to extract text...",
+        duration: 2000,
+      });
+      
+      // Try a completely different approach focusing on text extraction
+      const extractedText = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        
+        reader.onload = (e) => {
+          const binary = e.target?.result as string || '';
+          
+          // Step 1: Filter out obvious PDF binary markers and headers
+          if (binary.includes('%PDF') || binary.includes('endobj') || binary.includes('endstream')) {
+            // This is definitely a PDF, now extract meaningful text
+            
+            // Step 2: Extract text using multiple methods and combine results
+            let extractedParts: string[] = [];
+            
+            // Method 1: Look for plain text sections (between TJ or Tj operators)
+            const textSections = binary.match(/\[(.*?)\]\s*TJ|\(.*?\)\s*Tj/g) || [];
+            if (textSections.length > 0) {
+              const plainTextParts = textSections.map(section => {
+                // Extract content from TJ sections (array of strings)
+                if (section.endsWith('TJ')) {
+                  const content = section.substring(1, section.length - 3).trim();
+                  // Extract strings from the TJ array
+                  const strings = content.match(/\(([^\)\\]*(?:\\.[^\)\\]*)*)\)/g) || [];
+                  return strings
+                    .map(s => s.substring(1, s.length - 1))
+                    .join(' ');
+                } 
+                // Extract content from Tj sections (single string)
+                else if (section.endsWith('Tj')) {
+                  const content = section.substring(1, section.length - 4);
+                  return content.replace(/\\\(/g, '(').replace(/\\\)/g, ')');
+                }
+                return '';
+              }).filter(text => text.trim().length > 0);
+              
+              extractedParts.push(...plainTextParts);
+            }
+            
+            // Method 2: Look for text in content streams
+            const contentStreams = binary.match(/stream[\s\S]*?endstream/g) || [];
+            if (contentStreams.length > 0) {
+              const streamTexts = contentStreams.map(stream => {
+                // Extract only readable text from streams
+                const text = stream.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\xFF]/g, '');
+                // Find potential text strings
+                const strings = text.match(/\(([^\)\\]*(?:\\.[^\)\\]*)*)\)/g) || [];
+                return strings
+                  .map(s => s.substring(1, s.length - 1))
+                  .filter(s => {
+                    // Only keep strings that are mostly printable characters
+                    const printable = s.replace(/[^\x20-\x7E]/g, '').length;
+                    return s.length > 3 && printable > s.length * 0.8;
+                  })
+                  .join(' ');
+              }).filter(text => text.trim().length > 0);
+              
+              extractedParts.push(...streamTexts);
+            }
+            
+            // Method 3: Direct string extraction as fallback
+            if (extractedParts.length === 0) {
+              const strings = binary.match(/\(([^\)\\]{3,}(?:\\.[^\)\\]*)*)\)/g) || [];
+              const textStrings = strings
+                .map(s => s.substring(1, s.length - 1))
+                .filter(s => {
+                  // Only keep strings that are mostly printable ASCII
+                  const printable = s.replace(/[^\x20-\x7E]/g, '').length;
+                  return s.length > 4 && printable > s.length * 0.8;
+                });
+              
+              extractedParts.push(...textStrings);
+            }
+            
+            // Step 3: Clean up the extracted text
+            let result = extractedParts
+              .join('\n')
+              // Remove PDF escape sequences
+              .replace(/\\n/g, '\n')
+              .replace(/\\r/g, '')
+              .replace(/\\t/g, ' ')
+              .replace(/\s+/g, ' ')
+              // Remove binary data markers
+              .replace(/endobj|endstream|startxref|xref|trailer/g, '')
+              // Remove non-printable characters
+              .replace(/[\x00-\x09\x0B\x0C\x0E-\x1F]/g, '')
+              // Fix spacing
+              .replace(/\s+/g, ' ')
+              .trim();
+              
+            // Filter out sections that look like PDF syntax
+            result = result
+              .split('\n')
+              .filter(line => {
+                // Filter out lines that look like PDF syntax or binary data
+                return !line.includes('obj') && 
+                       !line.includes('PDF') &&
+                       !line.includes('endstream') &&
+                       !line.includes('FontDescriptor') &&
+                       !line.match(/^[0-9]+ [0-9]+ R$/) && // PDF references
+                       !line.match(/^[<>{}\[\]]/); // PDF syntax markers
+              })
+              .join('\n');
+            
+            if (result.length > 100) {
+              resolve(result);
+            } else {
+              // If we couldn't extract meaningful text, provide a clear message
+              resolve("This PDF appears to contain limited extractable text or may be protected. Please try copying the text manually from the PDF.");
+            }
+          } else {
+            // This doesn't appear to be a PDF or is in an unexpected format
+            resolve("The file doesn't appear to be a standard PDF or may be protected. Please try copying the text manually.");
+          }
+        };
+        
+        reader.onerror = () => {
+          resolve("Error reading the PDF file. The file may be corrupted or protected.");
+        };
+        
+        reader.readAsBinaryString(file);
+      });
+      
+      // Check the quality of extraction and provide appropriate feedback
+      if (extractedText && extractedText.length > 300) {
+        toast({
+          title: "Success",
+          description: "Text extracted from PDF",
+          duration: 2000,
+        });
+        return extractedText;
+      } else if (extractedText && extractedText.length > 100) {
+        toast({
+          title: "Partial Success",
+          description: "Limited text extracted from PDF",
+          duration: 3000,
+        });
+        return extractedText;
+      }
+      
+      toast({
+        title: "Limited Success",
+        description: "This PDF may be protected or contain images. Try manual extraction.",
+        duration: 4000,
+      });
+      
+      return extractedText;
+    } catch (error) {
+      console.error('PDF extraction error:', error);
+      toast({
+        title: "Error",
+        description: "Could not extract text from PDF",
+        duration: 3000,
+      });
+      return `We had trouble extracting text from this PDF. Please try opening the PDF externally and paste the text here manually.`;
+    }
+  };
+  
+  // Enhanced text extraction from Word document using mammoth
+  const extractWordText = async (file: File): Promise<string> => {
+    toast({
+      title: "Processing Document",
+      description: "Extracting text content...",
+      duration: 2000,
+    });
+    
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      let text = '';
+      let fileType = '';
+      
+      // Handle different document types
+      if (file.name.toLowerCase().endsWith('.rtf')) {
+        // RTF files - use a simplified approach
+        fileType = 'RTF';
+        // For RTF files we need special handling - we'll extract what we can
+        const basicText = await readFirstChunkAsText(file, 10000); // Read up to 10KB
+        text = basicText.replace(/[\r\n]+/g, '\n').replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+        
+        toast({
+          title: "RTF Format Detected",
+          description: "Limited support for RTF. Some formatting may be lost.",
+          duration: 3000,
+        });
+      } else {
+        // DOCX files - use mammoth
+        fileType = 'Word';
+        // Extract raw text from the document
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        text = result.value;
+        
+        // Check if we have warnings or issues
+        if (result.messages.length > 0) {
+          console.warn('Word document conversion notes:', result.messages);
+          // Check if there are serious issues that might affect extraction quality
+          const seriousIssues = result.messages.filter(msg => msg.type === 'error');
+          if (seriousIssues.length > 0) {
+            toast({
+              title: "Document Processing Note",
+              description: "Some content may not have been extracted properly.",
+              duration: 4000,
+            });
+          }
+        }
+      }
+      
+      console.log(`Extracted ${text.length} characters from ${fileType} document`);
+      
+      // Only add header if text was successfully extracted
+      if (text.trim().length > 0) {
+        return `${fileType} Document: ${file.name}\n\n${text}`;
+      }
+      
+      // If we got here but have no text, the extraction was unsuccessful
+      throw new Error('No text content could be extracted');
+    } catch (error) {
+      console.error('Error extracting document text:', error);
+      toast({
+        title: "Document Processing Error",
+        description: "Could not extract text from this document.",
+        variant: "destructive",
+        duration: 4000,
+      });
+      return `Could not extract text from document: ${file.name}\n\n` +
+        `The document might be:\n` +
+        `- Password protected\n` +
+        `- Corrupted\n` +
+        `- In an unsupported format\n\n` +
+        `Try saving it as a plain text file (.txt) instead.`;
+    }
+  };
+  
+  // Read first chunk of a file as text (for preview purposes)
+  const readFirstChunkAsText = (file: File, size: number = 2048): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      // Read specified amount or default to 2KB
+      const blob = file.slice(0, size);
+      
+      reader.onload = (e) => {
+        const result = e.target?.result as string || '';
+        resolve(result + (size <= 2048 ? '...[content truncated]' : ''));
+      };
+      
+      reader.onerror = () => {
+        resolve('[Could not read file content]');
+      };
+      
+      reader.readAsText(blob);
+    });
+  };
+  
+  // Handle file selection
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setSelectedFile(file);
+    setFileError(null);
+    setFileInfo({ type: file.type, name: file.name });
+    
+    const result = await processFile(file);
+    if (result) {
+      setRawText(result.text);
+      setActiveTab('paste');
+      toast({ 
+        title: "File Processed", 
+        description: `Content extracted from ${result.fileName}. You can now convert it to CSV.` 
+      });
     }
   };
   
@@ -260,40 +536,46 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
               <TabsContent value="upload" className="mt-4">
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="file-upload">Upload a text, PDF, or Word file</Label>
+                    <Label htmlFor="ai-file-upload">Upload a text, PDF, or Word file containing payment data</Label>
                     <Input 
-                      id="file-upload"
+                      id="ai-file-upload"
                       type="file"
                       accept=".txt,.pdf,.doc,.docx,.rtf"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          setSelectedFile(file);
-                        }
-                      }}
+                      onChange={handleFileSelect}
+                      disabled={isReadingFile}
                     />
                     <p className="text-xs text-muted-foreground">
                       Supported formats: .txt, .pdf, .doc, .docx, .rtf
                     </p>
                   </div>
                   
-                  {selectedFile && (
-                    <Button
-                      onClick={readSelectedFile}
-                      disabled={isReadingFile}
-                      variant="secondary"
-                      className="w-full gap-2"
-                    >
-                      {isReadingFile ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" /> Reading File...
-                        </>
-                      ) : (
-                        <>
-                          <FileUp className="w-4 h-4" /> Read File Content
-                        </>
+                  {fileInfo && (
+                    <div className="rounded-md bg-muted p-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        {fileInfo.type.includes('pdf') || fileInfo.name.endsWith('.pdf') ? (
+                          <File className="h-4 w-4 text-primary" />
+                        ) : fileInfo.type.includes('word') || fileInfo.name.match(/\.(doc|docx)$/) ? (
+                          <FileText className="h-4 w-4 text-primary" />
+                        ) : (
+                          <FileText className="h-4 w-4 text-primary" />
+                        )}
+                        <span className="font-medium">{fileInfo.name}</span>
+                      </div>
+                      {isReadingFile && (
+                        <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          <span>Processing file content...</span>
+                        </div>
                       )}
-                    </Button>
+                    </div>
+                  )}
+                  
+                  {fileError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Error</AlertTitle>
+                      <AlertDescription>{fileError}</AlertDescription>
+                    </Alert>
                   )}
                 </div>
               </TabsContent>
