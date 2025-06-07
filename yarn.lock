@@ -1669,6 +1669,13 @@
   dependencies:
     "@types/node" "*"
 
+"@types/pdfjs-dist@^2.10.377":
+  version "2.10.377"
+  resolved "https://registry.npmjs.org/@types/pdfjs-dist/-/pdfjs-dist-2.10.377.tgz"
+  integrity sha512-RNBWpazVTkC5aiUIIo6d7ojlL0hJSoeQP1QCvTsVLW6qkNEpTALiI0DNGCYAGDfhbL0r17c/zNPQ15lk948UXg==
+  dependencies:
+    pdfjs-dist "*"
+
 "@types/prop-types@*":
   version "15.7.13"
   resolved "https://registry.npmjs.org/@types/prop-types/-/prop-types-15.7.13.tgz"
@@ -3320,7 +3327,7 @@ pdf-parse@^1.1.1:
     debug "^3.1.0"
     node-ensure "^0.0.0"
 
-pdfjs-dist@^5.3.31:
+pdfjs-dist@*, pdfjs-dist@^5.3.31:
   version "5.3.31"
   resolved "https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-5.3.31.tgz"
   integrity sha512-EhPdIjNX0fcdwYQO+e3BAAJPXt+XI29TZWC7COhIXs/K0JHcUt1Gdz1ITpebTwVMFiLsukdUZ3u0oTO7jij+VA==

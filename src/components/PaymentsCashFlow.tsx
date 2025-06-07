@@ -18,6 +18,7 @@ import {
   monthToDate,
   dateToMonth
 } from '@/components/payments/utils';
+import { parseISO, startOfMonth, endOfMonth, addMonths, compareAsc, isBefore, isSameDay, isWithinInterval, isValid, format as formatDate } from 'date-fns';
 import { calculateDerivedProjectEndDate } from '@/utils/projectDateUtils';
 import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetchSession, sanitizePaymentData } from '@/services/firestoreService';
 import { db } from '@/firebaseConfig';
@@ -278,81 +279,236 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     ];
     return calculateDerivedProjectEndDate(allNonInterestEntries as Payment[]);
   }, [projectData.payments, projectData.rentalIncome]);
+  
+  useEffect(() => {
+    const handleSessionRefresh = () => {
+      if (!sessionId) {
+        toast({ title: 'No Session', description: 'Please select a session first.', variant: 'destructive' });
+        return;
+      }
+      console.log('Session refresh event received, reloading data');
+      
+      // Force reload data for current session
+      const fetchLatestData = async () => {
+        setIsFetching(true);
+        try {
+          const { entries } = await fetchSession(sessionId);
+          
+          if (entries && entries.length > 0) {
+            // Process entries with stable IDs
+            const processedEntries = entries.map(entry => ({
+              ...entry,
+              // Use our stable ID generation helper
+              id: entry.id || generateStableId(entry)
+            }));
+            
+            // Replace all payments with the refreshed data
+            updatePayments(processedEntries);
+            toast({ title: 'Data Refreshed', description: `Loaded ${entries.length} entries from session ${sessionId}` });
+            
+            // Update the loaded sessions set to include this session
+            setLoadedSessions(prev => new Set([...prev, sessionId]));
+          } else {
+            toast({ title: 'No Data', description: 'No entries found for this session.' });
+            // Clear payments on explicit refresh if no data found
+            updatePayments([]);
+          }
+        } catch (error) {
+          console.error('Error refreshing session data:', error);
+          toast({ title: 'Error', description: 'Failed to refresh session data.', variant: 'destructive' });
+        } finally {
+          setIsFetching(false);
+        }
+      };
+      
+      fetchLatestData();
+    };
+    
+    window.addEventListener('refresh-sessions', handleSessionRefresh);
+    return () => window.removeEventListener('refresh-sessions', handleSessionRefresh);
+  }, [sessionId, updatePayments, toast, generateStableId]);
+  
+  const calculateCompoundedMonthlyInterest = (
+    _inputTransactions: Payment[],
+    _annualRatePercent: number
+  ): Payment[] => {
+    // Filter out any existing interest entries to prevent duplication
+    const nonInterestTransactions = _inputTransactions.filter(p => p.type !== 'interest');
+    
+    // Deep copy to avoid mutating original data
+    const inputTransactions = JSON.parse(JSON.stringify(nonInterestTransactions));
+    const annualRatePercent = _annualRatePercent;
 
-  const calculateSimpleInterest = () => {
-    const paymentEntries = projectData.payments
-      .filter(p => p.amount < 0 && p.type !== 'interest')
-      .sort((a, b) => {
-        const dateA = new Date(a.date || monthToDate(a.month));
-        const dateB = new Date(b.date || monthToDate(b.month));
-        return dateA.getTime() - dateB.getTime();
-      });
+    console.log('[InterestDebug] calculateCompoundedMonthlyInterest called with:', { numTransactions: inputTransactions.length, annualRatePercent });
 
-    if (paymentEntries.length === 0) {
-      toast({ title: 'No Payments Found', description: 'Interest can only be calculated on payment entries.' });
-      return [];
+    if (annualRatePercent <= 0) {
+      return inputTransactions.map(p => ({
+        ...p, 
+        date: (typeof p.date === 'string' ? p.date : (p.date instanceof Date ? p.date.toISOString() : new Date(p.date || 0).toISOString()))
+      }));
     }
     
-    // Initialize lastDate with the first payment's date to handle past entries correctly
-    let lastDate = new Date(paymentEntries[0].date || monthToDate(paymentEntries[0].month));
-    let balance = 0;
-    const interestPayments: Payment[] = [];
+    const monthlyRate = annualRatePercent / 12 / 100;
 
-    for (const payment of paymentEntries) {
-      const paymentDate = new Date(payment.date || monthToDate(payment.month));
-      balance += Math.abs(payment.amount);
-      if (paymentDate > lastDate) {
-        lastDate = paymentDate;
-      }
+    // Normalize dates for transaction objects
+    const processedTransactions = inputTransactions
+      .map(p => ({
+        ...p,
+        date: typeof p.date === 'string' ? parseISO(p.date) : (p.date || monthToDate(p.month)), 
+      }))
+      .sort((a, b) => compareAsc(a.date as Date, b.date as Date));
+
+    if (processedTransactions.length === 0) {
+      return [];
     }
 
-    const monthlyRate = interestRate / 100 / 12;
-    let currentDate = new Date(lastDate);
-    for (let i = 0; i < 6; i++) {
-      currentDate.setMonth(currentDate.getMonth() + 1);
-      const monthlyInterest = balance * monthlyRate;
-      if (monthlyInterest <= 0) continue;
-
-      const prevBalance = balance;
-      balance += monthlyInterest;
-
-      interestPayments.push({
-        id: `interest_${currentDate.getTime()}`,
-        amount: -monthlyInterest,
-        date: new Date(currentDate),
-        month: dateToMonth(currentDate),
-        description: `Interest @ ${interestRate}% on balance ₹${Math.round(prevBalance).toLocaleString('en-IN')}`,
-        type: 'interest'
+    // Create a working ledger including original transactions
+    const workingLedger: Payment[] = [];
+    
+    // Add all original transactions to the working ledger
+    processedTransactions.forEach(txn => {
+      workingLedger.push({...txn, date: (txn.date as Date).toISOString()});
+    });
+    
+    // Determine the date range for interest calculation
+    const firstPaymentDate = processedTransactions[0].date as Date;
+    const lastPaymentDate = processedTransactions[processedTransactions.length - 1].date as Date;
+    
+    // Create a monthly schedule for interest calculations
+    let currentMonth = startOfMonth(firstPaymentDate);
+    const endMonth = addMonths(endOfMonth(lastPaymentDate), 1); // Add one month to include the last month
+    
+    // Track which months already have interest calculated
+    const processedMonths = new Set<string>();
+    
+    // Calculate running balance and apply interest month by month
+    // This is the key change - we'll track a running balance that includes previous interest
+    let runningBalance = 0;
+    
+    console.log('[InterestDebug] Starting interest calculation from', formatDate(currentMonth, 'yyyy-MM-dd'), 'to', formatDate(endMonth, 'yyyy-MM-dd'));
+    
+    while (isBefore(currentMonth, endMonth)) {
+      const monthKey = formatDate(currentMonth, 'yyyy-MM');
+      const monthStart = startOfMonth(currentMonth);
+      const monthEnd = endOfMonth(currentMonth);
+      
+      console.log(`[InterestDebug] Processing month: ${monthKey}`);
+      
+      // Update running balance with all transactions for this month (before interest is applied)
+      // This includes both original transactions and previously calculated interest
+      const currentMonthTransactions = workingLedger.filter(txn => {
+        const txnDate = parseISO(txn.date as string);
+        return isWithinInterval(txnDate, { start: monthStart, end: monthEnd });
       });
+      
+      currentMonthTransactions.forEach(txn => {
+        // Note: Negative amounts increase balance (payments), positive amounts decrease balance (returns)
+        runningBalance -= txn.amount;
+        console.log(`[InterestDebug] Transaction: ${txn.description}, Amount: ${txn.amount}, New Balance: ${runningBalance}`);
+      });
+      
+      // Check if we should calculate interest for this month
+      if (runningBalance > 0 && !processedMonths.has(monthKey)) {
+        // Calculate interest based on the current running balance (includes previous interest)
+        const interest = runningBalance * monthlyRate;
+        console.log(`[InterestDebug] Calculating interest for ${monthKey}: ${runningBalance} * ${monthlyRate} = ${interest}`);
+        
+        // Create interest transaction at month end
+        const interestPaymentDate = monthEnd;
+        const interestEntry = {
+          id: `interest_${formatDate(interestPaymentDate, 'yyyyMMdd')}_${Math.random().toString(36).substring(2, 7)}`,
+          amount: -interest, // Interest is a negative amount (increases the debt)
+          date: interestPaymentDate.toISOString(),
+          month: parseInt(formatDate(interestPaymentDate, 'yyyyMM')),
+          description: `Interest @ ${annualRatePercent}% on balance of ${formatNumber(runningBalance)}`,
+          type: 'interest' as const,
+        };
+        
+        // Add interest transaction to the working ledger
+        workingLedger.push(interestEntry);
+        
+        // Update the running balance to include this interest
+        runningBalance += interest;
+        console.log(`[InterestDebug] Added interest: ${interest}, New Balance: ${runningBalance}`);
+        
+        // Mark this month as processed
+        processedMonths.add(monthKey);
+      } else {
+        console.log(`[InterestDebug] Skipping interest for ${monthKey}: Balance=${runningBalance}, Already processed=${processedMonths.has(monthKey)}`);
+      }
+      
+      // Move to next month
+      currentMonth = addMonths(currentMonth, 1);
     }
-    return interestPayments;
+
+    return workingLedger.sort((a, b) => {
+      const dateA = parseISO(a.date as string);
+      const dateB = parseISO(b.date as string);
+      const dateComparison = compareAsc(dateA, dateB);
+      if (dateComparison !== 0) return dateComparison;
+      
+      // If dates are the same, sort by type (payment, return, interest)
+      const typeOrder = { payment: 1, return: 2, interest: 3 };
+      return (typeOrder[a.type as keyof typeof typeOrder] || 99) - (typeOrder[b.type as keyof typeof typeOrder] || 99);
+    });
   };
 
   const handleCalculateInterest = useCallback(() => {
+    console.log('[InterestDebug] handleCalculateInterest called. Current Interest Rate:', interestRate);
     try {
       if (interestRate <= 0) {
         toast({ title: 'No Interest to Calculate', description: 'Please set an interest rate greater than 0.' });
         return;
       }
 
-      const interestPayments = calculateSimpleInterest();
-      if (interestPayments.length === 0) return;
+      const nonInterestProjectPayments = projectData.payments
+        .filter(p => p.type !== 'interest'); 
+        // Date normalization happens inside calculateCompoundedMonthlyInterest
 
-      const nonInterestPayments = projectData.payments.filter(p => p.type !== 'interest');
-      const updatedPayments = [...nonInterestPayments, ...interestPayments];
-    
-      setCurrentInterestDetails({ newInterestPayments: interestPayments });
-      updatePayments(updatedPayments);
+      const returnsFromIncomeStream: Payment[] = projectData.rentalIncome.map((r, i): Payment => ({
+        id: r.id || `return_income_${i}_${r.month}_${r.amount}`,
+        month: r.month,
+        amount: r.amount, // Positive for returns
+        description: r.description || (r.type === 'sale' ? `Property Sale (${r.type})` : `Rental Income (${r.type || 'rental'})`),
+        date: r.date || monthToDate(r.month), // Ensure date is present
+        type: 'return', // Explicitly set as 'return' for Payment compatibility
+      }));
+
+      const allBaseTransactions = [...nonInterestProjectPayments, ...returnsFromIncomeStream];
+      console.log('[InterestDebug] All Base Transactions for calculation:', JSON.parse(JSON.stringify(allBaseTransactions)));
+
+      const newLedgerWithInterest = calculateCompoundedMonthlyInterest(allBaseTransactions, interestRate);
+      console.log('[InterestDebug] Ledger returned from calculation:', JSON.parse(JSON.stringify(newLedgerWithInterest)));
+
+      const newInterestPaymentsCount = newLedgerWithInterest.filter(p => p.type === 'interest').length;
+      console.log('[InterestDebug] New Interest Payments Count:', newInterestPaymentsCount);
+      const oldInterestPaymentsCount = allBaseTransactions.length - nonInterestProjectPayments.length - returnsFromIncomeStream.length; // Should be 0 if logic is correct
+
+      // The newLedgerWithInterest contains all original non-interest payments plus new interest.
+      // It should replace all previous payments (projectData.payments and effectively clear rentalIncome's contribution to the old payments list if it was merged before)
+      // We need to segregate the ledger back into project payments (costs and generated interest) and returns (from rentalIncome stream if they need to be kept separate)
+      // However, the simplest is to have updatePayments handle a single list that represents the entire cash flow.
+      // For now, assume updatePayments updates projectData.payments, and rentalIncome is handled separately for display/input.
+      // The interest calculation should operate on the combined flow.
+      
+      // The `newLedgerWithInterest` is the new truth for `projectData.payments` if it's meant to hold the full ledger.
+      // Or, if `projectData.payments` should only contain costs + interest, and `projectData.rentalIncome` for returns, 
+      // then `newLedgerWithInterest` needs to be split. This seems overly complex for `updatePayments`.
+      // Let's assume `updatePayments` will set `projectData.payments` to the new comprehensive ledger.
+      // This means `projectData.rentalIncome` might become redundant for calculations if its items are now in `projectData.payments`.
+      // For now, the simplest path: `updatePayments` takes the full ledger.
+      updatePayments(newLedgerWithInterest.map(p => ({...p, date: (typeof p.date === 'string' ? p.date : (p.date as Date).toISOString()) })));
 
       toast({
-        title: 'Interest Calculated',
-        description: `${interestPayments.length} interest entries were created or updated.`
+        title: 'Interest Calculated (Compounded)',
+        description: `${newInterestPaymentsCount} interest entries were generated/updated.`
       });
+
     } catch (error) {
       console.error('Error in handleCalculateInterest:', error);
-      toast({ title: 'Error', description: 'An unexpected error occurred during interest calculation.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'An unexpected error occurred during compounded interest calculation.', variant: 'destructive' });
     }
-  }, [projectData.payments, interestRate, toast, updatePayments]);
+  }, [projectData.payments, projectData.rentalIncome, interestRate, toast, updatePayments, monthToDate]);
 
   const allPaymentsWithInterest = useMemo(() => projectData.payments, [projectData.payments]);
 
