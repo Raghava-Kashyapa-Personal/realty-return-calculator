@@ -392,7 +392,6 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
 
       const newInterestPaymentsCount = newLedgerWithInterest.filter(p => p.type === 'interest').length;
       console.log('[InterestDebug] New Interest Payments Count:', newInterestPaymentsCount);
-      console.log('[InterestDebug] New Interest Payments Count:', newInterestPaymentsCount);
       const oldInterestPaymentsCount = allBaseTransactions.length - nonInterestProjectPayments.length - returnsFromIncomeStream.length; // Should be 0 if logic is correct
 
       // The newLedgerWithInterest contains all original non-interest payments plus new interest.
