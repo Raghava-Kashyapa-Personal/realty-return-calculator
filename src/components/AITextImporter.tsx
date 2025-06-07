@@ -11,6 +11,13 @@ import { Upload, X, Wand2, FileText, FileUp, Loader2, AlertCircle, File } from '
 import { useToast } from '@/hooks/use-toast';
 // Import mammoth for Word docs
 import mammoth from 'mammoth';
+import * as pdfjsLib from 'pdfjs-dist/build/pdf';
+// For Vite, importing the worker as a URL is a common pattern
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'; // Using '?url' tells Vite to provide a URL to the worker file
+
+if (typeof window !== 'undefined' && 'Worker' in window) { // Ensure this runs only in browser
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+} 
 
 
 interface AITextImporterProps {
@@ -81,169 +88,61 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
     }
   };
   
-  // Extract text from PDF using a specialized approach for browser environment
+  // Extract text from PDF using pdfjs-dist
   const extractPdfText = async (file: File): Promise<string> => {
+    toast({
+      title: "Processing PDF",
+      description: "Extracting text content...",
+      duration: 2000,
+    });
+
     try {
-      toast({
-        title: "Processing PDF",
-        description: "Attempting to extract text...",
-        duration: 2000,
-      });
-      
-      // Try a completely different approach focusing on text extraction
-      const extractedText = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        
-        reader.onload = (e) => {
-          const binary = e.target?.result as string || '';
-          
-          // Step 1: Filter out obvious PDF binary markers and headers
-          if (binary.includes('%PDF') || binary.includes('endobj') || binary.includes('endstream')) {
-            // This is definitely a PDF, now extract meaningful text
-            
-            // Step 2: Extract text using multiple methods and combine results
-            let extractedParts: string[] = [];
-            
-            // Method 1: Look for plain text sections (between TJ or Tj operators)
-            const textSections = binary.match(/\[(.*?)\]\s*TJ|\(.*?\)\s*Tj/g) || [];
-            if (textSections.length > 0) {
-              const plainTextParts = textSections.map(section => {
-                // Extract content from TJ sections (array of strings)
-                if (section.endsWith('TJ')) {
-                  const content = section.substring(1, section.length - 3).trim();
-                  // Extract strings from the TJ array
-                  const strings = content.match(/\(([^\)\\]*(?:\\.[^\)\\]*)*)\)/g) || [];
-                  return strings
-                    .map(s => s.substring(1, s.length - 1))
-                    .join(' ');
-                } 
-                // Extract content from Tj sections (single string)
-                else if (section.endsWith('Tj')) {
-                  const content = section.substring(1, section.length - 4);
-                  return content.replace(/\\\(/g, '(').replace(/\\\)/g, ')');
-                }
-                return '';
-              }).filter(text => text.trim().length > 0);
-              
-              extractedParts.push(...plainTextParts);
-            }
-            
-            // Method 2: Look for text in content streams
-            const contentStreams = binary.match(/stream[\s\S]*?endstream/g) || [];
-            if (contentStreams.length > 0) {
-              const streamTexts = contentStreams.map(stream => {
-                // Extract only readable text from streams
-                const text = stream.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\xFF]/g, '');
-                // Find potential text strings
-                const strings = text.match(/\(([^\)\\]*(?:\\.[^\)\\]*)*)\)/g) || [];
-                return strings
-                  .map(s => s.substring(1, s.length - 1))
-                  .filter(s => {
-                    // Only keep strings that are mostly printable characters
-                    const printable = s.replace(/[^\x20-\x7E]/g, '').length;
-                    return s.length > 3 && printable > s.length * 0.8;
-                  })
-                  .join(' ');
-              }).filter(text => text.trim().length > 0);
-              
-              extractedParts.push(...streamTexts);
-            }
-            
-            // Method 3: Direct string extraction as fallback
-            if (extractedParts.length === 0) {
-              const strings = binary.match(/\(([^\)\\]{3,}(?:\\.[^\)\\]*)*)\)/g) || [];
-              const textStrings = strings
-                .map(s => s.substring(1, s.length - 1))
-                .filter(s => {
-                  // Only keep strings that are mostly printable ASCII
-                  const printable = s.replace(/[^\x20-\x7E]/g, '').length;
-                  return s.length > 4 && printable > s.length * 0.8;
-                });
-              
-              extractedParts.push(...textStrings);
-            }
-            
-            // Step 3: Clean up the extracted text
-            let result = extractedParts
-              .join('\n')
-              // Remove PDF escape sequences
-              .replace(/\\n/g, '\n')
-              .replace(/\\r/g, '')
-              .replace(/\\t/g, ' ')
-              .replace(/\s+/g, ' ')
-              // Remove binary data markers
-              .replace(/endobj|endstream|startxref|xref|trailer/g, '')
-              // Remove non-printable characters
-              .replace(/[\x00-\x09\x0B\x0C\x0E-\x1F]/g, '')
-              // Fix spacing
-              .replace(/\s+/g, ' ')
-              .trim();
-              
-            // Filter out sections that look like PDF syntax
-            result = result
-              .split('\n')
-              .filter(line => {
-                // Filter out lines that look like PDF syntax or binary data
-                return !line.includes('obj') && 
-                       !line.includes('PDF') &&
-                       !line.includes('endstream') &&
-                       !line.includes('FontDescriptor') &&
-                       !line.match(/^[0-9]+ [0-9]+ R$/) && // PDF references
-                       !line.match(/^[<>{}\[\]]/); // PDF syntax markers
-              })
-              .join('\n');
-            
-            if (result.length > 100) {
-              resolve(result);
-            } else {
-              // If we couldn't extract meaningful text, provide a clear message
-              resolve("This PDF appears to contain limited extractable text or may be protected. Please try copying the text manually from the PDF.");
-            }
-          } else {
-            // This doesn't appear to be a PDF or is in an unexpected format
-            resolve("The file doesn't appear to be a standard PDF or may be protected. Please try copying the text manually.");
-          }
-        };
-        
-        reader.onerror = () => {
-          resolve("Error reading the PDF file. The file may be corrupted or protected.");
-        };
-        
-        reader.readAsBinaryString(file);
-      });
-      
-      // Check the quality of extraction and provide appropriate feedback
-      if (extractedText && extractedText.length > 300) {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        // textContent.items is an array of objects, check if 'str' property exists
+        const pageText = textContent.items.map(item => ('str' in item ? item.str : '')).join(" ");
+        fullText += pageText + "\n"; // Add a newline between pages
+      }
+
+      if (fullText.trim()) {
         toast({
           title: "Success",
-          description: "Text extracted from PDF",
+          description: "Text extracted from PDF.",
           duration: 2000,
         });
-        return extractedText;
-      } else if (extractedText && extractedText.length > 100) {
+        return `PDF Document: ${file.name}\n\n${fullText.trim()}`;
+      } else {
         toast({
-          title: "Partial Success",
-          description: "Limited text extracted from PDF",
-          duration: 3000,
+          title: "Limited Success",
+          description: "Could not extract meaningful text from this PDF. It might be image-based.",
+          duration: 4000,
         });
-        return extractedText;
+        return `Could not extract meaningful text from PDF: ${file.name}. It might be image-based. Try manual extraction.`;
       }
-      
+    } catch (error) {
+      console.error('Error extracting PDF text with pdf.js:', error);
+      let errorMessage = "Could not extract text from this PDF.";
+      // Check for specific pdf.js error types if possible, or use instanceof Error
+      if (error instanceof Error) {
+          // pdf.js might throw errors with a 'name' property for specific issues
+          if ('name' in error && error.name === 'PasswordException') {
+              errorMessage = "This PDF is password protected. Please remove the password and try again.";
+          } else if (error.message.includes('Invalid PDF structure')) {
+              errorMessage = "The PDF file seems to be corrupted or has an invalid structure.";
+          }
+      }
       toast({
-        title: "Limited Success",
-        description: "This PDF may be protected or contain images. Try manual extraction.",
+        title: "PDF Processing Error",
+        description: errorMessage,
+        variant: "destructive",
         duration: 4000,
       });
-      
-      return extractedText;
-    } catch (error) {
-      console.error('PDF extraction error:', error);
-      toast({
-        title: "Error",
-        description: "Could not extract text from PDF",
-        duration: 3000,
-      });
-      return `We had trouble extracting text from this PDF. Please try opening the PDF externally and paste the text here manually.`;
+      return `Error processing PDF: ${file.name}\n${errorMessage}\nTry opening it externally and pasting the text manually.`;
     }
   };
   

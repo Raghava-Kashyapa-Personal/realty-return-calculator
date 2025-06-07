@@ -18,6 +18,7 @@ import {
   monthToDate,
   dateToMonth
 } from '@/components/payments/utils';
+import { parseISO, startOfMonth, endOfMonth, addMonths, compareAsc, isBefore, isSameDay, isWithinInterval, isValid, format as formatDate } from 'date-fns';
 import { calculateDerivedProjectEndDate } from '@/utils/projectDateUtils';
 import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetchSession, sanitizePaymentData } from '@/services/firestoreService';
 import { db } from '@/firebaseConfig';
@@ -279,80 +280,155 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     return calculateDerivedProjectEndDate(allNonInterestEntries as Payment[]);
   }, [projectData.payments, projectData.rentalIncome]);
 
-  const calculateSimpleInterest = () => {
-    const paymentEntries = projectData.payments
-      .filter(p => p.amount < 0 && p.type !== 'interest')
-      .sort((a, b) => {
-        const dateA = new Date(a.date || monthToDate(a.month));
-        const dateB = new Date(b.date || monthToDate(b.month));
-        return dateA.getTime() - dateB.getTime();
-      });
+  const calculateCompoundedMonthlyInterest = (
+    // DEBUG START
+    _inputTransactions: Payment[],
+    _annualRatePercent: number
+    // DEBUG END
+  ) => {
 
-    if (paymentEntries.length === 0) {
-      toast({ title: 'No Payments Found', description: 'Interest can only be calculated on payment entries.' });
+if (isNewSession) {
+console.log('New session detected, starting with empty payments');
+// Clear any existing payments for new sessions
+updatePayments([]);
+sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
+return;
+}
+
+    const processedTransactions = inputTransactions
+      .map(p => ({
+        ...p,
+        // Ensure date is a Date object for internal calculations
+        date: typeof p.date === 'string' ? parseISO(p.date) : (p.date || monthToDate(p.month)), 
+      }))
+      .sort((a, b) => compareAsc(a.date as Date, b.date as Date));
+    console.log('[InterestDebug] Processed Transactions (sorted):', JSON.parse(JSON.stringify(processedTransactions)));
+    console.log('[InterestDebug] Processed Transactions (sorted):', JSON.parse(JSON.stringify(processedTransactions)));
+
+    if (processedTransactions.length === 0) {
       return [];
     }
-    
-    // Initialize lastDate with the first payment's date to handle past entries correctly
-    let lastDate = new Date(paymentEntries[0].date || monthToDate(paymentEntries[0].month));
-    let balance = 0;
-    const interestPayments: Payment[] = [];
 
-    for (const payment of paymentEntries) {
-      const paymentDate = new Date(payment.date || monthToDate(payment.month));
-      balance += Math.abs(payment.amount);
-      if (paymentDate > lastDate) {
-        lastDate = paymentDate;
-      }
-    }
+    const ledger: Payment[] = [];
+    let outstandingPrincipal = 0; 
 
-    const monthlyRate = interestRate / 100 / 12;
-    let currentDate = new Date(lastDate);
-    for (let i = 0; i < 6; i++) {
-      currentDate.setMonth(currentDate.getMonth() + 1);
-      const monthlyInterest = balance * monthlyRate;
-      if (monthlyInterest <= 0) continue;
+    const firstPaymentDate = processedTransactions[0].date as Date;
+    const lastPaymentDate = processedTransactions[processedTransactions.length - 1].date as Date;
 
-      const prevBalance = balance;
-      balance += monthlyInterest;
+    let currentMonthStart = startOfMonth(firstPaymentDate);
+    console.log('[InterestDebug] Starting Loop. First Payment Date:', firstPaymentDate, 'Last Payment Date:', lastPaymentDate, 'Initial currentMonthStart:', currentMonthStart);
+    console.log('[InterestDebug] Starting Loop. First Payment Date:', firstPaymentDate, 'Last Payment Date:', lastPaymentDate, 'Initial currentMonthStart:', currentMonthStart);
 
-      interestPayments.push({
-        id: `interest_${currentDate.getTime()}`,
-        amount: -monthlyInterest,
-        date: new Date(currentDate),
-        month: dateToMonth(currentDate),
-        description: `Interest @ ${interestRate}% on balance ₹${Math.round(prevBalance).toLocaleString('en-IN')}`,
-        type: 'interest'
+    while (isBefore(currentMonthStart, addMonths(startOfMonth(lastPaymentDate), 1)) || isSameDay(currentMonthStart, startOfMonth(lastPaymentDate))) {
+      const currentMonthEnd = endOfMonth(currentMonthStart);
+      console.log(`[InterestDebug] Month Loop: ${formatDate(currentMonthStart, 'yyyy-MM')}. Outstanding Principal (start of month): ${outstandingPrincipal}`);
+      console.log(`[InterestDebug] Month Loop: ${formatDate(currentMonthStart, 'yyyy-MM')}. Outstanding Principal (start of month): ${outstandingPrincipal}`);
+
+      processedTransactions.forEach(txn => {
+        if (isWithinInterval(txn.date as Date, { start: currentMonthStart, end: currentMonthEnd })) {
+          outstandingPrincipal -= txn.amount; 
+          ledger.push({ ...txn, date: (txn.date as Date).toISOString() }); 
+          console.log(`[InterestDebug]     Processed txn in month: ${txn.description}, Amount: ${txn.amount}, New Outstanding: ${outstandingPrincipal}`); 
+          console.log(`[InterestDebug]     Processed txn in month: ${txn.description}, Amount: ${txn.amount}, New Outstanding: ${outstandingPrincipal}`); 
+        }
       });
+
+      if (outstandingPrincipal > 0) {
+        console.log(`[InterestDebug]     Outstanding principal ${outstandingPrincipal} > 0. Calculating interest.`);
+        console.log(`[InterestDebug]     Outstanding principal ${outstandingPrincipal} > 0. Calculating interest.`);
+        const interest = outstandingPrincipal * monthlyRate;
+        const principalBeforeInterest = outstandingPrincipal;
+        outstandingPrincipal += interest; 
+
+        const interestPaymentDate = endOfMonth(currentMonthStart);
+        ledger.push({
+          id: `interest_${formatDate(interestPaymentDate, 'yyyyMMddHHmmss')}_${Math.random().toString(36).substring(2, 7)}`,
+          amount: -interest,
+          date: interestPaymentDate.toISOString(),
+          month: parseInt(formatDate(interestPaymentDate, 'yyyyMM')),
+          description: `Interest @ ${annualRatePercent}% on balance of ${Math.round(principalBeforeInterest).toLocaleString('en-IN')}`,
+          type: 'interest',
+        });
+        console.log(`[InterestDebug]       Calculated Interest: ${interest}, Principal Before: ${principalBeforeInterest}, New Outstanding Principal: ${outstandingPrincipal}`);
+        });
+        console.log(`[InterestDebug]       Calculated Interest: ${interest}, Principal Before: ${principalBeforeInterest}, New Outstanding Principal: ${outstandingPrincipal}`);
+        });
+      }
+      currentMonthStart = addMonths(currentMonthStart, 1);
     }
-    return interestPayments;
+
+    console.log('[InterestDebug] Final Ledger (before sort):', JSON.parse(JSON.stringify(ledger)));
+    console.log('[InterestDebug] Final Ledger (before sort):', JSON.parse(JSON.stringify(ledger)));
+    return ledger.sort((a, b) => {
+      const dateA = parseISO(a.date as string);
+      const dateB = parseISO(b.date as string);
+      const dateComparison = compareAsc(dateA, dateB);
+      if (dateComparison !== 0) return dateComparison;
+      const typeOrder = { payment: 1, return: 2, interest: 3 };
+      return (typeOrder[a.type as keyof typeof typeOrder] || 99) - (typeOrder[b.type as keyof typeof typeOrder] || 99);
+    });
   };
 
   const handleCalculateInterest = useCallback(() => {
+    console.log('[InterestDebug] handleCalculateInterest called. Current Interest Rate:', interestRate);
+    console.log('[InterestDebug] handleCalculateInterest called. Current Interest Rate:', interestRate);
     try {
       if (interestRate <= 0) {
         toast({ title: 'No Interest to Calculate', description: 'Please set an interest rate greater than 0.' });
         return;
       }
 
-      const interestPayments = calculateSimpleInterest();
-      if (interestPayments.length === 0) return;
+      const nonInterestProjectPayments = projectData.payments
+        .filter(p => p.type !== 'interest'); 
+        // Date normalization happens inside calculateCompoundedMonthlyInterest
 
-      const nonInterestPayments = projectData.payments.filter(p => p.type !== 'interest');
-      const updatedPayments = [...nonInterestPayments, ...interestPayments];
-    
-      setCurrentInterestDetails({ newInterestPayments: interestPayments });
-      updatePayments(updatedPayments);
+      const returnsFromIncomeStream: Payment[] = projectData.rentalIncome.map((r, i): Payment => ({
+        id: r.id || `return_income_${i}_${r.month}_${r.amount}`,
+        month: r.month,
+        amount: r.amount, // Positive for returns
+        description: r.description || (r.type === 'sale' ? 'Property Sale' : 'Rental Income'),
+        date: r.date || monthToDate(r.month), // Ensure date is present
+        type: r.type || 'return',
+      }));
+
+      const allBaseTransactions = [...nonInterestProjectPayments, ...returnsFromIncomeStream];
+      console.log('[InterestDebug] All Base Transactions for calculation:', JSON.parse(JSON.stringify(allBaseTransactions)));
+      console.log('[InterestDebug] All Base Transactions for calculation:', JSON.parse(JSON.stringify(allBaseTransactions)));
+
+      const newLedgerWithInterest = calculateCompoundedMonthlyInterest(allBaseTransactions, interestRate);
+      console.log('[InterestDebug] Ledger returned from calculation:', JSON.parse(JSON.stringify(newLedgerWithInterest)));
+      console.log('[InterestDebug] Ledger returned from calculation:', JSON.parse(JSON.stringify(newLedgerWithInterest)));
+
+      const newInterestPaymentsCount = newLedgerWithInterest.filter(p => p.type === 'interest').length;
+      console.log('[InterestDebug] New Interest Payments Count:', newInterestPaymentsCount);
+      console.log('[InterestDebug] New Interest Payments Count:', newInterestPaymentsCount);
+      const oldInterestPaymentsCount = allBaseTransactions.length - nonInterestProjectPayments.length - returnsFromIncomeStream.length; // Should be 0 if logic is correct
+
+      // The newLedgerWithInterest contains all original non-interest payments plus new interest.
+      // It should replace all previous payments (projectData.payments and effectively clear rentalIncome's contribution to the old payments list if it was merged before)
+      // We need to segregate the ledger back into project payments (costs and generated interest) and returns (from rentalIncome stream if they need to be kept separate)
+      // However, the simplest is to have updatePayments handle a single list that represents the entire cash flow.
+      // For now, assume updatePayments updates projectData.payments, and rentalIncome is handled separately for display/input.
+      // The interest calculation should operate on the combined flow.
+      
+      // The `newLedgerWithInterest` is the new truth for `projectData.payments` if it's meant to hold the full ledger.
+      // Or, if `projectData.payments` should only contain costs + interest, and `projectData.rentalIncome` for returns, 
+      // then `newLedgerWithInterest` needs to be split. This seems overly complex for `updatePayments`.
+      // Let's assume `updatePayments` will set `projectData.payments` to the new comprehensive ledger.
+      // This means `projectData.rentalIncome` might become redundant for calculations if its items are now in `projectData.payments`.
+      // For now, the simplest path: `updatePayments` takes the full ledger.
+      updatePayments(newLedgerWithInterest.map(p => ({...p, date: (typeof p.date === 'string' ? p.date : (p.date as Date).toISOString()) })));
 
       toast({
-        title: 'Interest Calculated',
-        description: `${interestPayments.length} interest entries were created or updated.`
+        title: 'Interest Calculated (Compounded)',
+        description: `${newInterestPaymentsCount} interest entries were generated/updated.`
       });
+
     } catch (error) {
       console.error('Error in handleCalculateInterest:', error);
-      toast({ title: 'Error', description: 'An unexpected error occurred during interest calculation.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'An unexpected error occurred during compounded interest calculation.', variant: 'destructive' });
     }
-  }, [projectData.payments, interestRate, toast, updatePayments]);
+  }, [projectData.payments, projectData.rentalIncome, interestRate, toast, updatePayments, monthToDate]);
 
   const allPaymentsWithInterest = useMemo(() => projectData.payments, [projectData.payments]);
 
