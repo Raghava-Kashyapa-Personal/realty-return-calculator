@@ -3,12 +3,32 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Upload, X, Wand2 } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Upload, X, Wand2, FileText, FileUp, Loader2, AlertCircle, File } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+// Import mammoth for Word docs
+import mammoth from 'mammoth';
+import * as pdfjsLib from 'pdfjs-dist/build/pdf';
+// For Vite, importing the worker as a URL is a common pattern
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'; // Using '?url' tells Vite to provide a URL to the worker file
+
+if (typeof window !== 'undefined' && 'Worker' in window) { // Ensure this runs only in browser
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+} 
+
 
 interface AITextImporterProps {
   onImport: (csvData: string) => void;
   onClose: () => void;
+}
+
+interface ProcessFileResult {
+  text: string;
+  fileType: string;
+  fileName: string;
 }
 
 // Initialize the Google Generative AI with your API key
@@ -20,7 +40,243 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
   const [rawText, setRawText] = useState('');
   const [csvResult, setCsvResult] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isReadingFile, setIsReadingFile] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [activeTab, setActiveTab] = useState('paste');
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [fileInfo, setFileInfo] = useState<{type: string, name: string} | null>(null);
   const { toast } = useToast();
+
+  // Process the selected file
+  const processFile = async (file: File): Promise<ProcessFileResult | null> => {
+    setFileError(null);
+    setIsReadingFile(true);
+    
+    try {
+      let text = "";
+      const fileType = file.type;
+      const fileName = file.name.toLowerCase();
+      const extension = fileName.split('.').pop() || '';
+      
+      console.log(`Processing file: ${fileName}, type: ${fileType}`);
+      
+      if (fileType === "text/plain" || extension === "txt") {
+        // Handle text files
+        text = await readTextFile(file);
+        return { text, fileType: 'text', fileName };
+      } 
+      else if (fileType === "application/pdf" || extension === "pdf") {
+        // Extract text from PDF using pdf-parse library
+        text = await extractPdfText(file);
+        return { text, fileType: 'pdf', fileName };
+      } 
+      else if (fileType.includes("word") || ["doc", "docx", "rtf"].includes(extension)) {
+        // Extract text from Word document using mammoth
+        text = await extractWordText(file);
+        return { text, fileType: 'word', fileName };
+      } 
+      else {
+        throw new Error(`Unsupported file type: ${fileType}. Please use a text, PDF, or Word file.`);
+      }
+    } catch (error) {
+      console.error('Error processing file:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error processing file';
+      setFileError(errorMessage);
+      return null;
+    } finally {
+      setIsReadingFile(false);
+    }
+  };
+  
+  // Extract text from PDF using pdfjs-dist
+  const extractPdfText = async (file: File): Promise<string> => {
+    toast({
+      title: "Processing PDF",
+      description: "Extracting text content...",
+      duration: 2000,
+    });
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        // textContent.items is an array of objects, check if 'str' property exists
+        const pageText = textContent.items.map(item => ('str' in item ? item.str : '')).join(" ");
+        fullText += pageText + "\n"; // Add a newline between pages
+      }
+
+      if (fullText.trim()) {
+        toast({
+          title: "Success",
+          description: "Text extracted from PDF.",
+          duration: 2000,
+        });
+        return `PDF Document: ${file.name}\n\n${fullText.trim()}`;
+      } else {
+        toast({
+          title: "Limited Success",
+          description: "Could not extract meaningful text from this PDF. It might be image-based.",
+          duration: 4000,
+        });
+        return `Could not extract meaningful text from PDF: ${file.name}. It might be image-based. Try manual extraction.`;
+      }
+    } catch (error) {
+      console.error('Error extracting PDF text with pdf.js:', error);
+      let errorMessage = "Could not extract text from this PDF.";
+      // Check for specific pdf.js error types if possible, or use instanceof Error
+      if (error instanceof Error) {
+          // pdf.js might throw errors with a 'name' property for specific issues
+          if ('name' in error && error.name === 'PasswordException') {
+              errorMessage = "This PDF is password protected. Please remove the password and try again.";
+          } else if (error.message.includes('Invalid PDF structure')) {
+              errorMessage = "The PDF file seems to be corrupted or has an invalid structure.";
+          }
+      }
+      toast({
+        title: "PDF Processing Error",
+        description: errorMessage,
+        variant: "destructive",
+        duration: 4000,
+      });
+      return `Error processing PDF: ${file.name}\n${errorMessage}\nTry opening it externally and pasting the text manually.`;
+    }
+  };
+  
+  // Enhanced text extraction from Word document using mammoth
+  const extractWordText = async (file: File): Promise<string> => {
+    toast({
+      title: "Processing Document",
+      description: "Extracting text content...",
+      duration: 2000,
+    });
+    
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      let text = '';
+      let fileType = '';
+      
+      // Handle different document types
+      if (file.name.toLowerCase().endsWith('.rtf')) {
+        // RTF files - use a simplified approach
+        fileType = 'RTF';
+        // For RTF files we need special handling - we'll extract what we can
+        const basicText = await readFirstChunkAsText(file, 10000); // Read up to 10KB
+        text = basicText.replace(/[\r\n]+/g, '\n').replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+        
+        toast({
+          title: "RTF Format Detected",
+          description: "Limited support for RTF. Some formatting may be lost.",
+          duration: 3000,
+        });
+      } else {
+        // DOCX files - use mammoth
+        fileType = 'Word';
+        // Extract raw text from the document
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        text = result.value;
+        
+        // Check if we have warnings or issues
+        if (result.messages.length > 0) {
+          console.warn('Word document conversion notes:', result.messages);
+          // Check if there are serious issues that might affect extraction quality
+          const seriousIssues = result.messages.filter(msg => msg.type === 'error');
+          if (seriousIssues.length > 0) {
+            toast({
+              title: "Document Processing Note",
+              description: "Some content may not have been extracted properly.",
+              duration: 4000,
+            });
+          }
+        }
+      }
+      
+      console.log(`Extracted ${text.length} characters from ${fileType} document`);
+      
+      // Only add header if text was successfully extracted
+      if (text.trim().length > 0) {
+        return `${fileType} Document: ${file.name}\n\n${text}`;
+      }
+      
+      // If we got here but have no text, the extraction was unsuccessful
+      throw new Error('No text content could be extracted');
+    } catch (error) {
+      console.error('Error extracting document text:', error);
+      toast({
+        title: "Document Processing Error",
+        description: "Could not extract text from this document.",
+        variant: "destructive",
+        duration: 4000,
+      });
+      return `Could not extract text from document: ${file.name}\n\n` +
+        `The document might be:\n` +
+        `- Password protected\n` +
+        `- Corrupted\n` +
+        `- In an unsupported format\n\n` +
+        `Try saving it as a plain text file (.txt) instead.`;
+    }
+  };
+  
+  // Read first chunk of a file as text (for preview purposes)
+  const readFirstChunkAsText = (file: File, size: number = 2048): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      // Read specified amount or default to 2KB
+      const blob = file.slice(0, size);
+      
+      reader.onload = (e) => {
+        const result = e.target?.result as string || '';
+        resolve(result + (size <= 2048 ? '...[content truncated]' : ''));
+      };
+      
+      reader.onerror = () => {
+        resolve('[Could not read file content]');
+      };
+      
+      reader.readAsText(blob);
+    });
+  };
+  
+  // Handle file selection
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setSelectedFile(file);
+    setFileError(null);
+    setFileInfo({ type: file.type, name: file.name });
+    
+    const result = await processFile(file);
+    if (result) {
+      setRawText(result.text);
+      setActiveTab('paste');
+      toast({ 
+        title: "File Processed", 
+        description: `Content extracted from ${result.fileName}. You can now convert it to CSV.` 
+      });
+    }
+  };
+  
+  // Read text file contents
+  const readTextFile = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          resolve(e.target.result as string);
+        } else {
+          reject(new Error('Failed to read file'));
+        }
+      };
+      reader.onerror = (e) => {
+        reject(new Error('File reading error'));
+      };
+      reader.readAsText(file);
+    });
+  };
 
   // Function to convert text to CSV format using Google's Generative AI (Gemini)
   const convertToCSV = async () => {
@@ -153,18 +409,76 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">
-                Paste any text containing payment information, and Google's Gemini AI will convert it to CSV format.
-              </p>
-              <Textarea
-                value={rawText}
-                onChange={(e) => setRawText(e.target.value)}
-                placeholder="Paste your text here... Example:&#10;May 2025 - Booking payment of Rs. 1,46,000&#10;June 2025 - Foundation work payment Rs. 2,92,000"
-                rows={6}
-                className="font-mono text-xs"
-              />
-            </div>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="paste" className="flex items-center gap-1">
+                  <FileText className="w-4 h-4" /> Paste Text
+                </TabsTrigger>
+                <TabsTrigger value="upload" className="flex items-center gap-1">
+                  <FileUp className="w-4 h-4" /> Upload File
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="paste" className="mt-4">
+                <p className="text-sm text-muted-foreground mb-2">
+                  Paste any text containing payment information, and Google's Gemini AI will convert it to CSV format.
+                </p>
+                <Textarea
+                  value={rawText}
+                  onChange={(e) => setRawText(e.target.value)}
+                  placeholder="Paste your text here... Example:&#10;May 2025 - Booking payment of Rs. 1,46,000&#10;June 2025 - Foundation work payment Rs. 2,92,000"
+                  rows={6}
+                  className="font-mono text-xs"
+                />
+              </TabsContent>
+              
+              <TabsContent value="upload" className="mt-4">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="ai-file-upload">Upload a text, PDF, or Word file containing payment data</Label>
+                    <Input 
+                      id="ai-file-upload"
+                      type="file"
+                      accept=".txt,.pdf,.doc,.docx,.rtf"
+                      onChange={handleFileSelect}
+                      disabled={isReadingFile}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Supported formats: .txt, .pdf, .doc, .docx, .rtf
+                    </p>
+                  </div>
+                  
+                  {fileInfo && (
+                    <div className="rounded-md bg-muted p-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        {fileInfo.type.includes('pdf') || fileInfo.name.endsWith('.pdf') ? (
+                          <File className="h-4 w-4 text-primary" />
+                        ) : fileInfo.type.includes('word') || fileInfo.name.match(/\.(doc|docx)$/) ? (
+                          <FileText className="h-4 w-4 text-primary" />
+                        ) : (
+                          <FileText className="h-4 w-4 text-primary" />
+                        )}
+                        <span className="font-medium">{fileInfo.name}</span>
+                      </div>
+                      {isReadingFile && (
+                        <div className="flex items-center gap-2 mt-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          <span>Processing file content...</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {fileError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Error</AlertTitle>
+                      <AlertDescription>{fileError}</AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              </TabsContent>
+            </Tabs>
             
             <div className="flex justify-center">
               <Button 
