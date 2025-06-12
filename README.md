@@ -1,6 +1,6 @@
 # Realty Return Calculator
 
-This project is a web application designed to help users calculate returns on realty investments, manage cash flows, and analyze investment performance. It features interest calculation, XIRR (Extended Internal Rate of Return) calculation, and comprehensive cash flow analysis.
+This project is a web application designed to help users calculate returns on realty investments, manage cash flows, and analyze investment performance. It features interest calculation, XIRR (Extended Internal Rate of Return) calculation, comprehensive cash flow analysis, and cloud-based data persistence.
 
 ## Project Overview
 
@@ -15,19 +15,30 @@ The Realty Return Calculator provides tools for:
   - Total Interest Paid
   - XIRR (time-weighted return)
 - Importing/exporting cash flow data via CSV
+- AI-powered text import using Google's Gemini AI
+- Cloud storage with Firebase Firestore
+- Session-based data management
 - Viewing a detailed table of all cash flow entries (payments, returns, interest) with running balances
 
 ## Technologies Used
 
 This project is built with:
 
-- **Vite**: For fast frontend build tooling.
-- **React**: For building the user interface.
-- **TypeScript**: For static typing and improved code quality.
-- **shadcn-ui**: For UI components.
-- **Tailwind CSS**: For utility-first CSS styling.
-- **Lucide React**: For icons.
-- **date-fns**: For date utility functions.
+- **Vite**: For fast frontend build tooling
+- **React**: For building the user interface
+- **TypeScript**: For static typing and improved code quality
+- **shadcn-ui**: For UI components
+- **Tailwind CSS**: For utility-first CSS styling
+- **Lucide React**: For icons
+- **date-fns**: For date utility functions
+- **Firebase**: For cloud storage and real-time data synchronization
+- **Google Generative AI (Gemini)**: For AI-powered text parsing
+- **xirr**: For XIRR calculations
+- **PapaParse**: For CSV parsing
+- **pdf-parse & pdfjs-dist**: For PDF text extraction
+- **mammoth**: For Word document text extraction
+- **React Query**: For data fetching and caching
+- **React Router**: For client-side routing
 
 ## Features
 
@@ -43,11 +54,20 @@ This project is built with:
   - **Rental Income**: Regular income from the property (positive cash flow)
   - **Interest**: Calculated interest on outstanding balances (negative cash flow)
 - **Running Balances**: Tracks the outstanding principal after each transaction
+- **Session Management**: Organize cash flows by project sessions
 
 ### Data Management
 - **CSV Import/Export**: 
   - Import cash flow data from CSV (format: `Date (YYYY-MM-DD or MMM-YYYY), Amount, Description, Type`)
   - Export complete transaction history to CSV for further analysis
+- **AI-Powered Text Import**:
+  - Extract payment data from unstructured text using Google's Gemini AI
+  - Support for PDF, Word (.doc, .docx), RTF, and plain text files
+  - Intelligent parsing of dates, amounts, and descriptions
+- **Firebase Cloud Storage**:
+  - Automatic saving of all transactions to Firebase Firestore
+  - Session-based data organization
+  - Real-time synchronization across devices
 - **Dynamic Table View**: Displays all transactions chronologically with running balances
 - **Responsive Design**: Works on all device sizes with a clean, modern interface
 
@@ -76,14 +96,29 @@ To run this project locally, follow these steps:
     ```sh
     yarn install
     ```
+    Or with bun:
+    ```sh
+    bun install
+    ```
 
-3.  **Run the development server:**
+3.  **Set up environment variables:**
+    Create a `.env` file in the root directory and add:
+    ```
+    VITE_GOOGLE_API_KEY=your_google_api_key_here
+    ```
+    (Optional: The app includes a default API key for testing, but you should use your own for production)
+
+4.  **Run the development server:**
     ```sh
     npm run dev
     ```
     Or with yarn:
     ```sh
     yarn dev
+    ```
+    Or with bun:
+    ```sh
+    bun dev
     ```
     This will start the Vite development server, typically on `http://localhost:5173`.
 
@@ -96,33 +131,45 @@ The application follows a modular architecture with clear separation of concerns
   - Project name and metadata
   - List of payments, returns, and rental income
   - Financial parameters (interest rate, etc.)
+  - Session management
 
 ### Main Components
 
 #### 1. Application Entry Point
 - **`src/main.tsx`:** Initializes the React application
-- **`src/App.tsx`:** Sets up routing and global providers
+- **`src/App.tsx`:** Sets up routing, providers (React Query, Tooltip, Toast)
 
 #### 2. Page Components
 - **`src/pages/Index.tsx`:** Main application page that orchestrates:
   - State management for project data
   - Integration of all major components
   - Data flow between components
+  - Session management
 
 #### 3. Core Feature Components
-- **`PaymentManager` (`src/components/PaymentManager.tsx`):**
-  - Manages payment entries (add/edit/delete)
-  - Handles CSV import/export
-  - Coordinates with interest calculation
+- **`PaymentsCashFlow` (`src/components/PaymentsCashFlow.tsx`):**
+  - Central component for cash flow management
+  - Handles payment entries (add/edit/delete)
+  - CSV import/export functionality
+  - AI text import integration
+  - Firebase data synchronization
+  - Interest calculation trigger
 
 - **`CashFlowAnalysis` (`src/components/CashFlowAnalysis.tsx`):**
   - Displays financial metrics (XIRR, net profit, etc.)
   - Processes and analyzes cash flow data
   - Visualizes investment performance
 
-- **`FinancialMetrics` (`src/components/FinancialMetrics.tsx`):**
-  - Manages interest rate settings
-  - Displays key financial indicators
+- **`AITextImporter` (`src/components/AITextImporter.tsx`):**
+  - AI-powered text parsing interface
+  - Supports multiple file formats (PDF, Word, RTF, TXT)
+  - Uses Google's Gemini AI for intelligent data extraction
+  - Fallback rule-based parser
+
+- **`SessionSidebar` (`src/components/SessionSidebar.tsx`):**
+  - Manages project sessions
+  - Allows switching between different projects
+  - Session creation and deletion
 
 - **`ProjectSetup` (`src/components/ProjectSetup.tsx`):**
   - Handles project configuration
@@ -144,27 +191,30 @@ The application follows a modular architecture with clear separation of concerns
   - Handles import/export of transaction data
   - Converts between CSV and internal data structures
 
+- **`firestoreService` (`src/services/firestoreService.ts`):**
+  - Firebase Firestore integration
+  - Handles CRUD operations for payments and sessions
+  - Manages data synchronization
+
 ### UI Components
 - **`PaymentsTable` (`src/components/payments/PaymentsTable.tsx`):**
   - Displays transaction history
   - Handles inline editing
   - Shows running balances
 
-- **`ReturnsTable` (`src/components/payments/ReturnsTable.tsx`):**
-  - Manages return entries
-  - Similar functionality to PaymentsTable but for returns
-
 ### Data Flow
 1. User interactions in UI components trigger state updates
 2. State changes flow down through props
 3. Business logic in hooks processes the data
 4. Results are displayed in the UI
-5. Changes are persisted in the parent component's state
+5. Changes are persisted to Firebase Firestore
+6. Session management allows switching between projects
 
 ### State Management
 - Local component state for UI-specific state
 - Lifted state for shared data (managed in parent components)
-- React Context could be added for global state if needed
+- Firebase Firestore for persistent storage
+- React Query for caching and synchronization
 
 ### Type System
 - Strong TypeScript types for all data structures
@@ -179,16 +229,18 @@ The application follows a modular architecture with clear separation of concerns
 - `src/utils/`: Utility functions
   - `interestCalculator.ts`: Core interest calculation logic
   - `csvExport.ts`: CSV import/export functionality
+  - `projectDateUtils.ts`: Date manipulation utilities
 - `src/types/`: TypeScript type definitions
   - `project.ts`: Core data types
 - `src/hooks/`: Custom React hooks
   - `useInterestCalculator.ts`: Interest calculation logic
+  - `use-toast.ts`: Toast notification system
+- `src/services/`: External service integrations
+  - `firestoreService.ts`: Firebase Firestore operations
 - `src/pages/`: Page components
 - `public/`: Static assets
-
-## Contributing
-
-[Details on how to contribute, if applicable, e.g., coding standards, pull request process.]
+- `docs/`: Project documentation
+  - `TASKLIST.md`: Development roadmap and tasks
 
 ## How It Works
 
@@ -197,6 +249,7 @@ The application follows a modular architecture with clear separation of concerns
    - The daily rate is calculated as `(annual_rate / 365)`
    - For partial months, interest is prorated based on the number of days
    - Interest is added to the outstanding principal at the end of each month
+   - The calculation includes previously accrued interest in the principal (compound interest)
 
 2. **XIRR Calculation**:
    - Uses the `xirr` library for accurate time-weighted return calculations
@@ -209,6 +262,18 @@ The application follows a modular architecture with clear separation of concerns
    - Used as the basis for interest calculations
    - Reflects the current outstanding principal
 
+4. **AI Text Import**:
+   - Extracts text from uploaded files (PDF, Word, RTF, TXT)
+   - Uses Google's Gemini AI to parse unstructured text
+   - Identifies dates, amounts, and descriptions automatically
+   - Falls back to rule-based parsing if AI is unavailable
+
+5. **Firebase Integration**:
+   - Automatically saves all transactions to Firestore
+   - Organizes data by sessions for project management
+   - Enables real-time synchronization across devices
+   - Provides data persistence and backup
+
 ## Example Usage
 
 ### Basic Investment Scenario
@@ -216,6 +281,7 @@ The application follows a modular architecture with clear separation of concerns
 1. **Set Up Project**
    - Enter project name (e.g., "Commercial Property Investment")
    - Set annual interest rate (e.g., 12%)
+   - Create or select a session
 
 2. **Add Initial Investment**
    - Click "Add Payment"
@@ -262,11 +328,31 @@ The application follows a modular architecture with clear separation of concerns
    - Upload a CSV file with columns: `Date, Amount, Description, Type`
    - Supported types: `payment`, `return`, `rental`, `expense`
 
+### AI Text Import
+
+1. **Upload Document**
+   - Click "AI Import" button
+   - Select a file (PDF, Word, RTF, or TXT)
+   - The AI will extract and parse payment information
+
+2. **Paste Text**
+   - Alternatively, paste unstructured text directly
+   - Click "Convert to CSV" to parse with AI
+   - Review and import the parsed data
+
 ### Interest Calculation Details
 - Interest is calculated daily and compounded monthly
 - The system automatically generates interest entries at the end of each month
 - Partial months are prorated based on the number of days
 - Interest is calculated on the running balance after each transaction
+- Compound interest is applied (interest on previously accrued interest)
+
+## Testing
+
+The project includes:
+- Unit tests for utility functions (in progress)
+- Test setup with Vitest
+- Run tests with: `npm run test`
 
 ## Future Enhancements
 
@@ -275,7 +361,25 @@ The application follows a modular architecture with clear separation of concerns
 - Support for multiple currencies
 - Scenario analysis and comparison
 - Exportable reports in PDF format
+- Enhanced mobile experience
+- Offline support with sync capabilities
+- Multi-user collaboration features
+- Advanced filtering and search capabilities
+- Integration with external financial APIs
+
+## Contributing
+
+Contributions are welcome! Please follow these guidelines:
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+[Specify your license here]
 
 ---
 
-*This README was last updated on May 25, 2025.*
+*This README was last updated on January 2025.*
