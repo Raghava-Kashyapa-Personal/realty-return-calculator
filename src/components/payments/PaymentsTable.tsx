@@ -91,16 +91,10 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
     let runningBalance = 0;
     return sortedPayments.map(payment => {
       // For running balance calculation:
-      // - Payments INCREASE the principal (add as positive)
-      // - Returns DECREASE the principal (subtract as positive)
-      // - Interest INCREASES the principal (always treat as positive)
-      if (payment.type === 'payment') {
-        runningBalance += Math.abs(payment.amount);
-      } else if (payment.type === 'return') {
-        runningBalance -= Math.abs(payment.amount);
-      } else if (payment.type === 'interest') {
-        runningBalance += Math.abs(payment.amount); // Always add interest as positive
-      }
+      // - Payments (negative) DECREASE the principal
+      // - Returns (positive) INCREASE the principal
+      // - Interest (positive) INCREASES principal (reduces debt)
+      runningBalance += payment.amount;
       return { ...payment, balance: runningBalance };
     });
   };
@@ -115,7 +109,7 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
     <Card className="shadow-sm border-gray-200">
       <CardContent className="p-0">
         <Table>
-<TableHeader className="bg-gray-50">
+          <TableHeader className="bg-gray-50">
             <TableRow>
               <TableHead className="py-2 text-xs font-medium text-gray-500">Date</TableHead>
               <TableHead className="py-2 text-xs font-medium text-gray-500">Amount (₹)</TableHead>
@@ -203,12 +197,10 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                     />
                   ) : (
                     <span className={`text-sm ${(payment.type as PaymentType) === 'return' ? 'text-green-600' : (payment.type as PaymentType) === 'interest' ? 'text-purple-600' : 'text-red-600'}`}>
-                      {/* Only returns should be shown as positive */}
-                      {(payment.type as PaymentType) === 'return' ? '+' : '-'}
+                      {/* Only returns and interest should be shown as positive */}
+                      {(payment.type as PaymentType) === 'return' || (payment.type as PaymentType) === 'interest' ? '+' : '-'}
                       {/* For all types, show absolute value */}
-                      {(payment.type as PaymentType) === 'interest' 
-                        ? formatNumber(Math.abs(payment.amount), 2) /* Use 2 decimal places for interest */
-                        : formatNumber(Math.abs(payment.amount))}
+                      {formatNumber(Math.abs(payment.amount), (payment.type as PaymentType) === 'interest' ? 2 : undefined)}
                     </span>
                   )}
                 </TableCell>

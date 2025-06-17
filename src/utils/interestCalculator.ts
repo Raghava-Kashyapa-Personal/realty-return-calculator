@@ -78,9 +78,9 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
         const daysRemaining = daysInMonth - paymentDateDay + 1;
         
         if (daysRemaining > 0) {
-          const paymentInterest = payment.amount * dailyRate * daysRemaining;
+          const paymentInterest = Math.abs(payment.amount) * dailyRate * daysRemaining;
           monthInterest += paymentInterest;
-          interestBreakdown.push(`${Math.round(payment.amount).toLocaleString('en-IN')} (${daysRemaining} days)`);
+          interestBreakdown.push(`${Math.round(Math.abs(payment.amount)).toLocaleString('en-IN')} (${daysRemaining} days)`);
         }
       }
     }
@@ -95,7 +95,7 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
       
       paymentEntry = {
         id: uniqueId, // Guaranteed unique ID
-        amount: -roundedInterest, // Store as NEGATIVE with 2 decimal precision
+        amount: roundedInterest, // Store as POSITIVE with 2 decimal precision (interest is income)
         type: 'interest',
         date: new Date(monthEndDate), 
         month: (monthEndDate.getMonth()) + (monthEndDate.getFullYear() - 2024) * 12,
@@ -236,10 +236,9 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
         if (interestDetails.paymentEntry) {
           newInterestPayments.push(interestDetails.paymentEntry);
           
-          // Since interestDetails.amount is positive but interest is an outflow (like a payment),
-          // we should ADD it to the balance (increases debt/principal)
-          runningBalance += interestDetails.amount; // Compound interest
-          console.log(`Added interest ${interestDetails.amount} to balance, new balance: ${runningBalance}`);
+          // Since interestDetails.amount is positive and interest is income, SUBTRACT it from the balance (reduces debt/principal)
+          runningBalance -= interestDetails.amount; // Compound interest as income
+          console.log(`Subtracted interest ${interestDetails.amount} from balance, new balance: ${runningBalance}`);
         }
       }
       currentLoopMonthDate = addMonths(currentMonthStart, 1);
