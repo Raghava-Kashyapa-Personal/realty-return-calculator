@@ -417,10 +417,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         const interestPaymentDate = monthEnd;
         const interestEntry = {
           id: `interest_${formatDate(interestPaymentDate, 'yyyyMMdd')}_${Math.random().toString(36).substring(2, 7)}`,
-          amount: -interest, // Interest is a negative amount (increases the debt)
+          amount: +interest, // Interest is a negative amount (increases the debt)
           date: interestPaymentDate.toISOString(),
           month: parseInt(formatDate(interestPaymentDate, 'yyyyMM')),
-          description: `Interest @ ${annualRatePercent}% on balance of ${formatNumber(runningBalance)}`,
+          description: `Annual Interest @ ${annualRatePercent}% on balance of ${formatNumber(runningBalance)}`,
           type: 'interest' as const,
         };
         

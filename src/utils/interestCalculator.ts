@@ -207,38 +207,31 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
       // Update running balance with principal changes from payments in this month
       // IMPORTANT: Negative amounts are outflows (payments), positive are inflows (returns)
       for (const payment of paymentsInCurrentLoopMonth) {
-        // First, make sure we're working with the correct sign
-        // In our app, payments (outflows) are stored as negative values
-        // Returns (inflows) are stored as positive values
-        
-        console.log(`Processing payment:`, payment);
-        
-        // For payments (negative amounts), we INCREASE the debt/principal
+        // Payments (outflows) are negative, returns (inflows) are positive
         if (payment.amount < 0) {
-          // Add the absolute value to increase the debt
-          runningBalance += Math.abs(payment.amount);
-          console.log(`Added payment ${Math.abs(payment.amount)} to balance, new balance: ${runningBalance}`);
-        }
-        // For returns (positive amounts), we DECREASE the debt/principal
-        else if (payment.amount > 0) {
-          // Subtract directly to decrease the debt
-          runningBalance -= payment.amount;
-          console.log(`Subtracted return ${payment.amount} from balance, new balance: ${runningBalance}`);
+          runningBalance += payment.amount; // Add negative payment to runningBalance (debt increases)
+        } else if (payment.amount > 0) {
+          runningBalance += payment.amount; // Add positive return to runningBalance (debt decreases)
         }
       }
 
-      // Calculate interest for the current month if there was a balance or payments contributing to it
-      // The interest calculation itself uses balanceAtStartOfThisMonth for the full-month part,
-      // and paymentsInCurrentLoopMonth for pro-rata parts.
-      // Interest should be calculated for every month once there's a positive balance
-      if (runningBalance > 0) {
-        const interestDetails = calculateInterestDetailsForMonth(balanceAtStartOfThisMonth, paymentsInCurrentLoopMonth, currentMonthStart, dailyRate, monthlyRate, interestRate);
-        if (interestDetails.paymentEntry) {
-          newInterestPayments.push(interestDetails.paymentEntry);
-          
-          // Since interestDetails.amount is positive and interest is income, SUBTRACT it from the balance (reduces debt/principal)
-          runningBalance -= interestDetails.amount; // Compound interest as income
-          console.log(`Subtracted interest ${interestDetails.amount} from balance, new balance: ${runningBalance}`);
+      // Calculate interest for the current month if there is a negative balance (debt)
+      if (runningBalance < 0) {
+        // Calculate interest on the absolute value of the negative balance
+        const interestAmount = Math.abs(runningBalance) * monthlyRate;
+        if (interestAmount > 0) {
+          // Create interest payment as positive (income)
+          const interestPayment = {
+            id: `int_${currentMonthStart.getTime()}`,
+            amount: interestAmount,
+            type: 'interest',
+            date: new Date(currentMonthEnd),
+            month: (currentMonthEnd.getMonth()) + (currentMonthEnd.getFullYear() - 2024) * 12,
+            description: `Interest @ ${interestRate}% on balance of ${Math.abs(runningBalance).toLocaleString('en-IN')}`
+          };
+          newInterestPayments.push(interestPayment);
+          // Add interest to runningBalance (reduces debt)
+          runningBalance += interestAmount;
         }
       }
       currentLoopMonthDate = addMonths(currentMonthStart, 1);
