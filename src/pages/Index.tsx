@@ -10,6 +10,8 @@ import { SessionSidebar } from '@/components/SessionSidebar';
 import { ProjectData, Payment } from '@/types/project';
 import { TrendingUp, BarChart3 } from 'lucide-react';
 import { fetchSession, createNewSession, deleteSession } from '@/services/firestoreService';
+import { SessionNameDialog } from '@/components/SessionNameDialog';
+import { useNavigate } from 'react-router-dom';
 
 const Index = () => {
   // ...existing state
@@ -137,11 +139,23 @@ const Index = () => {
     }, 100);
   };
 
-  // Create a new session
-  const handleNewSession = async () => {
+  // State for session name dialog
+  const [isSessionDialogOpen, setIsSessionDialogOpen] = useState(false);
+  const [pendingSessionName, setPendingSessionName] = useState('');
+
+  // Handle new session button click
+  const handleNewSessionClick = () => {
+    setPendingSessionName('');
+    setIsSessionDialogOpen(true);
+  };
+
+  // Create a new session with the given name
+  const handleCreateSession = async (sessionName: string) => {
     setIsLoading(true);
+    setIsSessionDialogOpen(false);
+    
     try {
-      const { sessionId } = await createNewSession();
+      const { sessionId, name } = await createNewSession(sessionName);
       
       // Mark this as a new session in localStorage
       localStorage.setItem(`session-${sessionId}-is-new`, 'true');
@@ -149,7 +163,7 @@ const Index = () => {
       
       // Reset project data for new session
       const newProjectData = {
-        projectName: `Project ${new Date().toLocaleDateString()}`,
+        projectName: name, // Use the session name as the default project name
         annualInterestRate: 12,
         purchasePrice: 0,
         closingCosts: 0,
@@ -166,7 +180,7 @@ const Index = () => {
       // Store initial empty state in localStorage
       localStorage.setItem(`session-data-${sessionId}`, JSON.stringify([]));
       
-      // CRITICAL FIX: Set the current session ID immediately
+      // Set the current session ID immediately
       setCurrentSessionId(sessionId);
       
       // Force refresh the SessionSidebar component by fetching sessions
@@ -191,12 +205,15 @@ const Index = () => {
       };
       
       // Execute the refresh function
-      refreshSessions();
+      await refreshSessions();
       
       toast({
         title: 'New Session Created',
-        description: `Created new session: ${sessionId}`,
+        description: `Created new session: ${name}`,
       });
+      
+      // Navigate to the new session
+      navigate(`/session/${sessionId}`);
     } catch (error) {
       console.error('Error creating new session:', error);
       toast({
@@ -217,14 +234,23 @@ const Index = () => {
     setProjectData(prev => ({ ...prev, payments }));
   };
 
+  const navigate = useNavigate();
+
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
       {/* Session Sidebar */}
       <SessionSidebar 
-        onSelectSession={handleSelectSession}
-        onNewSession={handleNewSession}
+        onSelectSession={handleSelectSession} 
+        onNewSession={handleNewSessionClick} 
         currentSessionId={currentSessionId}
         onDeleteSession={handleDeleteSession}
+      />
+      
+      <SessionNameDialog
+        open={isSessionDialogOpen}
+        onOpenChange={setIsSessionDialogOpen}
+        onSave={handleCreateSession}
+        defaultName={pendingSessionName}
       />
       
       {/* Main Content */}

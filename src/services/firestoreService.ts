@@ -387,22 +387,47 @@ export const fetchSessions = async (limitCount: number = 20) => {
 };
 
 /**
- * Creates a new session in Firestore with current timestamp
- * @returns Object with new session ID
+ * Creates a new session in Firestore with current timestamp and name
+ * @param sessionName Optional name for the session
+ * @returns Object with new session ID and name
  */
-export const createNewSession = async () => {
+/**
+ * Updates the name of an existing session
+ * @param sessionId The ID of the session to update
+ * @param newName The new name for the session
+ */
+export const updateSessionName = async (sessionId: string, newName: string) => {
+  try {
+    await updateDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
+      name: newName,
+      updatedAt: Timestamp.now()
+    });
+  } catch (error) {
+    console.error('Error updating session name:', error);
+    throw error;
+  }
+};
+
+/**
+ * Creates a new session in Firestore with current timestamp and name
+ * @param sessionName Optional name for the session
+ * @returns Object with new session ID and name
+ */
+export const createNewSession = async (sessionName?: string) => {
   try {
     // Use current date as document ID (YYYY-MM-DD)
     const today = new Date().toISOString().split('T')[0];
     const sessionId = `${today}-${Math.random().toString(36).substring(2, 8)}`;
+    const name = sessionName || `Session ${new Date().toLocaleString()}`;
     
     await setDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
       createdAt: Timestamp.now(),
-      entries: [],
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
+      name,
+      entries: []
     });
     
-    return { sessionId };
+    return { sessionId, name };
   } catch (error) {
     console.error('Error creating new session:', error);
     throw error;
