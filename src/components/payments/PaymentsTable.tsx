@@ -111,12 +111,12 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
         <Table>
           <TableHeader className="bg-gray-50">
             <TableRow>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Date</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Amount (₹)</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Type</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Description</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Outstanding Principal</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500 text-right w-24">Actions</TableHead>
+              <TableHead className="py-2 text-xs font-medium text-gray-500 text-center">Date</TableHead>
+              <TableHead className="py-2 text-xs font-medium text-gray-500 text-center">Amount (₹)</TableHead>
+              <TableHead className="py-2 text-xs font-medium text-gray-500 text-center">Type</TableHead>
+              <TableHead className="py-2 text-xs font-medium text-gray-500 text-center">Description</TableHead>
+              <TableHead className="py-2 text-xs font-medium text-gray-500 text-center">Outstanding Principal</TableHead>
+              <TableHead className="py-2 text-xs font-medium text-gray-500 text-center w-24">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -129,22 +129,23 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
             )}
             {paymentsWithBalance.map((payment, index) => (
               <TableRow key={payment.id}>
-                <TableCell className="p-1">
-                  {editingPayment === payment.id ? (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button 
-                          variant="outline" 
-                          className="w-full justify-start text-left font-normal text-sm h-8"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <CalendarIcon className="mr-2 h-3 w-3" />
-                          {format(monthToDate(editValues.month), "MMM yyyy")}
-                        </Button>
+                <TableCell className="p-1 text-center">
+                  <div className="w-full flex justify-center">
+                    {editingPayment === payment.id ? (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            className="justify-center font-normal text-sm h-8 w-full max-w-[180px]"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <CalendarIcon className="mr-2 h-3 w-3" />
+                            {format(monthToDate(editValues.month), "MMM yyyy")}
+                          </Button>
                       </PopoverTrigger>
                       <PopoverContent 
                         className="w-auto p-0" 
-                        align="start"
+                        align="center"
                         onInteractOutside={(e) => e.preventDefault()}
                       >
                         <EnhancedCalendar
@@ -176,40 +177,39 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                       </PopoverContent>
                     </Popover>
                   ) : (
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">
-                        {payment.date 
-                          ? format(new Date(payment.date), "MMM d, yyyy") 
-                          : format(monthToDate(payment.month), "MMM d, yyyy")}
-                      </span>
-                    </div>
+                    <span className="text-sm">
+                      {payment.date 
+                        ? format(new Date(payment.date), "MMM d, yyyy") 
+                        : format(monthToDate(payment.month), "MMM d, yyyy")}
+                    </span>
                   )}
+                  </div>
                 </TableCell>
-                <TableCell className="p-1">
+                <TableCell className="p-1 text-center">
                   {editingPayment === payment.id ? (
                     <Input
                       type="number"
                       value={editValues.amount || ''}
                       onChange={(e) => setEditValues(prev => ({ ...prev, amount: Math.abs(Number(e.target.value)) }))}
                       onKeyDown={handleKeyPress}
-                      className="w-full h-8 text-sm"
+                      className="w-full h-8 text-sm text-center"
                       autoFocus
                     />
                   ) : (
                     <span className={`text-sm ${(payment.type as PaymentType) === 'return' ? 'text-green-600' : (payment.type as PaymentType) === 'interest' ? 'text-purple-600' : 'text-red-600'}`}>
                       {/* Only returns and interest should be shown as positive */}
                       {(payment.type as PaymentType) === 'return' || (payment.type as PaymentType) === 'interest' ? '+' : '-'}
-                      {/* For all types, show absolute value */}
-                      {formatNumber(Math.abs(payment.amount), (payment.type as PaymentType) === 'interest' ? 2 : undefined)}
+                      {/* For all types, show absolute value - use 0 decimal places for all types */}
+                      {Math.abs(Math.round(payment.amount)).toLocaleString('en-IN')}
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="p-1">
+                <TableCell className="p-1 text-center">
                   {editingPayment === payment.id ? (
                     <select 
                       value={editValues.type || 'payment'}
                       onChange={(e) => setEditValues(prev => ({ ...prev, type: e.target.value }))}
-                      className="w-full h-8 text-sm rounded-md border border-input px-3"
+                      className="w-full h-8 text-sm rounded-md border border-input px-3 text-center"
                     >
                       <option value="payment">Payment</option>
                       <option value="return">Return</option>
@@ -220,24 +220,24 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="p-1">
+                <TableCell className="p-1 text-center">
                   {editingPayment === payment.id ? (
                     <Input
                       value={editValues.description || ''}
                       onChange={(e) => setEditValues(prev => ({ ...prev, description: e.target.value }))}
                       onKeyDown={handleKeyPress}
-                      className="w-full h-8 text-sm"
+                      className="w-full h-8 text-sm text-center"
                     />
                   ) : (
                     <span className="text-sm">{payment.description}</span>
                   )}
                 </TableCell>
-                <TableCell className="py-2 text-right pr-4">
+                <TableCell className="p-1 text-center">
                   {formatCurrency(payment.balance)}
                 </TableCell>
-                <TableCell className="text-right py-2 pr-4 w-24">
+                <TableCell className="p-1 text-center w-24">
                   {editingPayment === payment.id || payment.type === 'interest' ? (
-                    <div className="flex items-center justify-end gap-1">
+                    <div className="flex items-center justify-center gap-1">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -256,7 +256,7 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                       </Button>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-end space-x-1">
+                    <div className="flex items-center justify-center space-x-1">
                       {(payment.type as PaymentType) !== 'interest' ? (
                         <Button
                           variant="ghost"
@@ -369,8 +369,8 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                     placeholder="Description"
                   />
                 </TableCell>
-                <TableCell className="p-1 pt-2 text-right">
-                  <div className="flex items-center justify-end space-x-1">
+                <TableCell className="p-1 pt-2 text-center">
+                  <div className="w-full text-center justify-end space-x-1">
                     <Button
                       variant="ghost"
                       size="sm"

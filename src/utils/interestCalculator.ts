@@ -87,15 +87,15 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
     
     let paymentEntry: Payment | null = null;
     if (monthInterest > 0) {
-      // Round to 2 decimal places and store as negative (since it's an outflow)
-      const roundedInterest = parseFloat(monthInterest.toFixed(2));
+      // Round to nearest whole number (no decimal places)
+      const roundedInterest = Math.round(monthInterest);
       
       // Create a truly unique ID by combining timestamp and a random value
       const uniqueId = `int_${monthEndDate.getTime()}_${Math.random().toString(36).substring(2, 10)}`;
       
       paymentEntry = {
         id: uniqueId, // Guaranteed unique ID
-        amount: roundedInterest, // Store as POSITIVE with 2 decimal precision (interest is income)
+        amount: roundedInterest, // Store as POSITIVE whole number (interest is income)
         type: 'interest',
         date: new Date(monthEndDate), 
         month: (monthEndDate.getMonth()) + (monthEndDate.getFullYear() - 2024) * 12,
