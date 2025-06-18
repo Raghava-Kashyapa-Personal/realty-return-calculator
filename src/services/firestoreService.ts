@@ -1,10 +1,25 @@
 import { db } from '../firebaseConfig';
-import { collection, doc, setDoc, getDoc, Timestamp, updateDoc, arrayUnion, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, Timestamp, updateDoc, arrayUnion, getDocs, query, orderBy, limit, where, deleteDoc } from 'firebase/firestore';
 import { Payment, ProjectData } from '@/types/project';
 
 // Collection names
 const CASHFLOW_COLLECTION = 'cashflows';
 const PAYMENTS_COLLECTION = 'test'; // Using 'test' as specified by the user
+
+/**
+ * Deletes a session (document) by its ID from Firestore
+ * @param sessionId The document ID of the session to delete
+ */
+export const deleteSession = async (sessionId: string): Promise<void> => {
+  try {
+    const docRef = doc(db, PAYMENTS_COLLECTION, sessionId);
+    await deleteDoc(docRef);
+    console.log(`Session ${sessionId} deleted successfully.`);
+  } catch (error) {
+    console.error(`Error deleting session ${sessionId}:`, error);
+    throw error;
+  }
+};
 
 /**
  * Saves project data to Firestore

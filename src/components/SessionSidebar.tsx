@@ -18,6 +18,7 @@ interface SessionSidebarProps {
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   currentSessionId?: string;
+  onDeleteSession?: (sessionId: string) => void;
 }
 
 const PAYMENTS_COLLECTION = 'test';
@@ -25,7 +26,8 @@ const PAYMENTS_COLLECTION = 'test';
 export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   onSelectSession,
   onNewSession,
-  currentSessionId
+  currentSessionId,
+  onDeleteSession
 }) => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -130,18 +132,35 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
                 {sessions.length > 0 ? sessions.map(session => (
                   <div
                     key={session.id}
-                    className={`p-3 mb-2 rounded-md cursor-pointer transition-colors
+                    className={`p-3 mb-2 rounded-md flex items-center justify-between transition-colors
                       ${currentSessionId === session.id 
                         ? 'bg-blue-100 border-l-4 border-blue-500' 
                         : 'hover:bg-gray-100'}`}
-                    onClick={() => onSelectSession(session.id)}
                   >
-                    <div className="flex items-center">
+                    <div
+                      className="flex items-center cursor-pointer flex-1"
+                      onClick={() => onSelectSession(session.id)}
+                    >
                       <Calendar className="h-4 w-4 mr-2" />
                       <div className="font-mono text-base">
                         {session.id}
                       </div>
                     </div>
+                    {onDeleteSession && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="ml-2 text-red-500 hover:bg-red-100"
+                        title="Delete session"
+                        onClick={e => {
+                          e.stopPropagation();
+                          onDeleteSession(session.id);
+                        }}
+                        disabled={loading}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 )) : (
                   <div className="text-center text-gray-500 py-8">
