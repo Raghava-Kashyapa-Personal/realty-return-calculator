@@ -236,7 +236,7 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                   {formatCurrency(payment.balance)}
                 </TableCell>
                 <TableCell className="p-1 text-center w-24">
-                  {editingPayment === payment.id || payment.type === 'interest' ? (
+                  {editingPayment === payment.id ? (
                     <div className="flex items-center justify-center gap-1">
                       <Button
                         variant="ghost"
@@ -246,14 +246,16 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                       >
                         <Check className="w-3.5 h-3.5" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onCancelEdit}
-                        className="p-1 h-7 w-7 rounded-full bg-red-50 text-red-600 hover:bg-red-100"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </Button>
+                      {payment.type !== 'interest' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={onCancelEdit}
+                          className="p-1 h-7 w-7 rounded-full bg-red-50 text-red-600 hover:bg-red-100"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <div className="flex items-center justify-center space-x-1">

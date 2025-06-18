@@ -266,16 +266,15 @@ const Index = () => {
         </div>
 
         <Tabs defaultValue="cashflow" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="cashflow" className="flex items-center gap-2">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="cashflow" className="flex items-center justify-center gap-2">
               <TrendingUp className="w-4 h-4" />
               <span>Cash Flow</span>
             </TabsTrigger>
-            <TabsTrigger value="analysis" className="flex items-center gap-2">
+            <TabsTrigger value="analysis" className="flex items-center justify-center gap-2">
               <BarChart3 className="w-4 h-4" />
               <span>Analysis & Setup</span>
             </TabsTrigger>
-
           </TabsList>
 
           <TabsContent value="cashflow">
