@@ -79,11 +79,22 @@ export const savePayments = async (payments: Payment[], sessionId?: string): Pro
       const existingData = docSnap.data();
       const existingPayments = existingData.entries || [];
       
-      // Merge existing and new payments
+      // Create a Set of existing payment IDs for quick lookup
+      const existingPaymentIds = new Set(existingPayments.map((p: Payment) => p.id));
+      
+      // Filter out any new payments that already exist (by ID)
+      const uniqueNewPayments = sanitizedPayments.filter(payment => !existingPaymentIds.has(payment.id));
+      
+      if (uniqueNewPayments.length === 0) {
+        console.log('No new payments to save - all entries already exist');
+        return docId;
+      }
+      
+      // Only update if we have new payments to add
       await updateDoc(docRef, {
-        entries: [...existingPayments, ...sanitizedPayments],
+        entries: [...existingPayments, ...uniqueNewPayments],
         updatedAt: Timestamp.now(),
-        count: existingPayments.length + sanitizedPayments.length,
+        count: existingPayments.length + uniqueNewPayments.length,
         sessionId: sessionId || existingData.sessionId
       });
     } else {

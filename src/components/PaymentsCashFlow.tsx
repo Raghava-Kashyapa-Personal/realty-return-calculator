@@ -198,30 +198,32 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
-  // Auto-load data when sessionId changes, but only once per session
+  // Handle session changes - only load data explicitly requested
   useEffect(() => {
-    if (!sessionId) return;
-
-    // Check if this is a new session that should start empty
-    const isNewSession = sessionId.includes('new-') ||
-                         sessionStorage.getItem(`session-${sessionId}-is-new`) === 'true' ||
-                         sessionId.startsWith('session-') && sessionId.includes('new');
-
-    if (isNewSession) {
-      console.log('New session detected, starting with empty payments');
-      // Clear any existing payments for new sessions
+    if (!sessionId) {
+      console.log('No session ID, clearing payments');
       updatePayments([]);
-      sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
       return;
     }
+
+    console.log('Session ID changed:', sessionId);
     
-    // Only fetch if we haven't loaded this session yet
-    if (!loadedSessions.has(sessionId)) {
-      fetchDataFromFirestore();
-      // Mark this session as loaded to prevent infinite loops
-      setLoadedSessions(prev => new Set([...prev, sessionId]));
+    // Clear payments when session changes - they'll be loaded manually or via explicit actions
+    updatePayments([]);
+    
+    // Clear any new session flags
+    if (sessionStorage.getItem(`session-${sessionId}-is-new`) === 'true') {
+      sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
     }
-  }, [sessionId, projectData.payments, loadedSessions]);
+  }, [sessionId]);
+  
+  // Clear loaded sessions when component unmounts to ensure fresh data on next mount
+  useEffect(() => {
+    return () => {
+      console.log('Clearing loaded sessions on unmount');
+      setLoadedSessions(new Set());
+    };
+  }, []);
 
   // Add listener for session refresh events
   useEffect(() => {
@@ -881,9 +883,6 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             </Button>
             <Button onClick={saveAllToFirestore} variant="outline" size="sm" className="h-8 gap-1">
               <Save className="h-3.5 w-3.5" /> Save All
-            </Button>
-            <Button onClick={fetchDataFromFirestoreManual} variant="outline" size="sm" className="h-8 gap-1" disabled={isFetching}>
-              <Database className="h-3.5 w-3.5" /> {isFetching ? "Loading..." : "Load from DB"}
             </Button>
             <Button onClick={() => setIsAddingNew(true)} size="sm" className="h-8 gap-1">
               <Plus className="h-3.5 w-3.5" /> Add Entry
