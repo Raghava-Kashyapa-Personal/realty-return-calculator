@@ -15,7 +15,13 @@ interface CashFlowAnalysisProps {
   lastUpdated?: number; // Timestamp to trigger recalculation
 }
 
-const calculateXIRR = (allCashFlows: Payment[]): number => {
+// Define a type that includes both Payment and IncomeItem
+interface CashFlowItem extends Omit<Payment, 'id' | 'type'> {
+  type: 'payment' | 'return' | 'interest' | 'rental' | 'sale';
+  id?: string;
+}
+
+const calculateXIRR = (allCashFlows: CashFlowItem[]): number => {
   try {
     if (allCashFlows.length < 2) return 0;
 
@@ -25,13 +31,9 @@ const calculateXIRR = (allCashFlows: Payment[]): number => {
     const transactions = allCashFlows.map(cf => {
       const date = 'date' in cf && cf.date ? new Date(cf.date) : monthToDate(cf.month);
       let amount;
-      if (cf.type === 'payment') {
+      if (cf.type === 'payment' || cf.type === 'interest') {
         amount = -Math.abs(cf.amount);
-      } else if (cf.type === 'return') {
-        amount = Math.abs(cf.amount);
-      } else if (cf.type === 'interest') {
-        amount = -Math.abs(cf.amount);
-      } else if (cf.type === 'rental') {
+      } else if (cf.type === 'return' || cf.type === 'rental' || cf.type === 'sale') {
         amount = Math.abs(cf.amount);
       } else {
         // Default case
@@ -128,11 +130,17 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
     const netProfit = totalReturns - totalInvestment;
     
     // Calculate XIRR with all cash flows
-    const allCashFlows = [
-      ...paymentsData,
+    const allCashFlows: CashFlowItem[] = [
+      // Ensure all payments have a type property
+      ...paymentsData.map(p => ({
+        ...p,
+        type: p.type || 'payment' as const
+      })),
+      // Add rental income with proper typing
       ...projectDataInput.rentalIncome.map(ri => ({
         ...ri,
-        type: 'rental' as const
+        type: ri.type as 'rental',
+        id: ri.id || `rental-${ri.month}-${ri.amount}`
       }))
     ];
     
@@ -198,10 +206,20 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
     return <p>No project data available for analysis.</p>;
   }
 
+  // Format project end date
+  const formattedEndDate = projectEndDate ? formatDateFns(projectEndDate, 'MMM yyyy') : 'Not set';
+
   return (
     <div className="space-y-6 p-4 bg-gray-50 rounded-lg">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-2xl font-semibold text-gray-700">Project Financial Summary</h2>
+        <div>
+          <h2 className="text-2xl font-semibold text-gray-700">Project Financial Summary</h2>
+          {projectEndDate && (
+            <p className="text-sm text-muted-foreground">
+              Project End Date: {formattedEndDate}
+            </p>
+          )}
+        </div>
         <Button 
           onClick={handleRefresh} 
           size="sm" 

@@ -581,13 +581,16 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       return;
     }
 
-    const lines = csvText.trim().split('\n');
+    const lines = csvText.trim().split(/\r?\n/); // Handle both Unix and Windows line endings
     const newPayments: Payment[] = [];
     const errors: string[] = [];
+    
+    // Check if first line is a header
     const headerTest = lines[0]?.toLowerCase() || '';
     const hasHeader = headerTest.includes('date') || headerTest.includes('amount');
+    let startLine = hasHeader ? 1 : 0;
 
-    for (let i = hasHeader ? 1 : 0; i < lines.length; i++) {
+    for (let i = startLine; i < lines.length; i++) {
       try {
         const line = lines[i].trim();
         if (!line) continue;
@@ -597,65 +600,130 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           console.log(`Skipping header row at line ${i + 1}`);
           continue;
         }
+
+        // Handle quoted fields and commas within quotes
+        const columns: string[] = [];
+        let current = '';
+        let inQuotes = false;
         
-        // Robustly parse CSV lines where amounts may contain commas
-        // Assumes format: Date, [Amount parts...], Description
-        const parts = line.split(',');
-        if (parts.length < 3) {
-          errors.push(`Line ${i + 1}: Malformed line. Expected: Date,Amount,Description`);
+        for (let j = 0; j < line.length; j++) {
+          const char = line[j];
+          const nextChar = line[j + 1];
+          
+          if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+              // Handle escaped quote
+              current += '"';
+              j++; // Skip next quote
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (char === ',' && !inQuotes) {
+            columns.push(current.trim());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        columns.push(current.trim());
+
+        // We need at least date and amount
+        if (columns.length < 2) {
+          errors.push(`Line ${i + 1}: Invalid format. Expected at least Date and Amount.`);
           continue;
         }
 
-        const dateStr = parts[0].trim();
-        const description = parts[parts.length - 1].trim();
-        const amountStr = parts.slice(1, -1).join('').trim();
+        const dateStr = columns[0].trim();
+        const amountStr = columns[1].trim();
+        const description = columns[2]?.trim() || '';
 
-        const month = parseDate(dateStr);
-        if (month <= 0) {
-          errors.push(`Line ${i + 1}: Could not parse date '${dateStr}'.`);
-          continue;
+        // Parse date - handle multiple formats
+        let month = 0;
+        let entryDate: Date;
+        
+        // Try parsing as MMM-YYYY format (e.g., May-2025)
+        const monthYearMatch = dateStr.match(/^(\w{3})-(\d{4})$/i);
+        if (monthYearMatch) {
+          const [_, monthName, year] = monthYearMatch;
+          const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
+          if (!isNaN(monthIndex)) {
+            month = parseInt(`${year}${String(monthIndex + 1).padStart(2, '0')}`, 10);
+            entryDate = new Date(parseInt(year), monthIndex, 1);
+          } else {
+            errors.push(`Line ${i + 1}: Invalid month '${monthName}' in date '${dateStr}'. Use format: MMM-YYYY (e.g., May-2025)`);
+            continue;
+          }
+        } 
+        // Try parsing as ISO date (YYYY-MM-DD) as fallback
+        else {
+          const isoDate = new Date(dateStr);
+          if (!isNaN(isoDate.getTime())) {
+            month = parseInt(formatDate(isoDate, 'yyyyMM'), 10);
+            entryDate = isoDate;
+          } else {
+            // Try the original parseDate as last resort
+            month = parseDate(dateStr);
+            if (month <= 0) {
+              errors.push(`Line ${i + 1}: Could not parse date '${dateStr}'. Use format: MMM-YYYY (e.g., May-2025) or YYYY-MM-DD`);
+              continue;
+            }
+            entryDate = monthToDate(month);
+          }
         }
-        const entryDate = monthToDate(month);
 
+        // Parse amount - handle currency symbols and thousand separators
         const amount = parseCurrencyAmount(amountStr);
         if (isNaN(amount)) {
-          errors.push(`Line ${i + 1}: Invalid amount format '${amountStr}'.`);
+          errors.push(`Line ${i + 1}: Invalid amount format '${amountStr}'. Expected a number.`);
           continue;
         }
 
+        // Determine transaction type based on amount and description
         let type: 'payment' | 'return' | 'interest' = 'payment';
-        if (amount > 0 || ['rent', 'income', 'return', 'sale'].some(term => description.toLowerCase().includes(term))) {
-          type = 'return';
+        const descLower = description.toLowerCase();
+        
+        if (amount > 0 || 
+            ['rent', 'income', 'return', 'sale', 'interest'].some(term => 
+              descLower.includes(term)
+            )) {
+          type = amount > 0 ? 'return' : 'payment';
+          if (descLower.includes('interest')) {
+            type = 'interest';
+          }
         }
 
+        // Create payment entry with proper typing
         const paymentEntry: Payment = {
-          id: '', // Temporary ID, will be replaced
+          id: '', // Will be set by generateStableId
           month,
-          amount: type === 'payment' ? -Math.abs(amount) : Math.abs(amount),
-          description,
+          amount: type === 'payment' || type === 'interest' ? -Math.abs(amount) : Math.abs(amount),
+          description: description || (type === 'return' ? 'Income' : 'Payment'),
           type,
           date: entryDate
         };
         
-        // Use our consistent ID generation helper
+        // Generate stable ID
         paymentEntry.id = generateStableId(paymentEntry);
+        newPayments.push(paymentEntry);
         
-        newPayments.push({
-          ...paymentEntry,
-          month,
-          amount: type === 'payment' ? -Math.abs(amount) : Math.abs(amount),
-          description,
-          type,
-          date: entryDate
-        });
       } catch (lineError) {
+        console.error(`Error processing line ${i + 1}:`, lineError);
         errors.push(`Line ${i + 1}: ${(lineError as Error).message}`);
       }
     }
 
     if (errors.length > 0) {
       console.warn('CSV import errors:', errors);
-      toast({ title: "Import Warning", description: `Encountered ${errors.length} errors during import.`, variant: "destructive" });
+      const errorMessage = errors.length > 5 
+        ? `Encountered ${errors.length} errors. First 5: ${errors.slice(0, 5).join(' ')}...`
+        : `Encountered errors: ${errors.join(' ')}`;
+      
+      toast({ 
+        title: "Import Warning", 
+        description: errorMessage, 
+        variant: "destructive",
+        duration: 10000 // Show for 10 seconds to allow reading longer messages
+      });
     }
 
     if (newPayments.length > 0) {
@@ -747,42 +815,101 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       return;
     }
 
-    const dateObj = newPayment.date instanceof Date ? newPayment.date : 
-                   (typeof newPayment.date === 'string' ? new Date(newPayment.date) : new Date());
-    
-    const paymentToAdd: Payment = {
-      id: '', // Temporary ID, will be replaced
-      month: dateToMonth(dateObj),
-      amount: newPayment.type === 'payment' ? -Math.abs(Number(newPayment.amount)) : Math.abs(Number(newPayment.amount)),
-      description: newPayment.description,
-      date: dateObj,
-      type: newPayment.type as 'payment' | 'return',
-    };
-    
-    // Use our consistent ID generation helper
-    paymentToAdd.id = generateStableId(paymentToAdd);
-
-    // Update UI with new payment
-    updatePayments([...projectData.payments, paymentToAdd]);
-
-    // Save to Firestore if we have a session ID
-    if (sessionId) {
-      try {
-        await saveSinglePayment(paymentToAdd, sessionId);
-        toast({ title: "Success", description: "Entry added and saved to the database." });
-        
-        // Trigger refresh for other components
-        window.dispatchEvent(new CustomEvent('refresh-sessions'));
-      } catch (firestoreError) {
-        console.error('Error saving to Firestore:', firestoreError);
-        toast({ title: "Warning", description: "Entry added but failed to save to the database.", variant: "destructive" });
+    // Ensure we have a valid date
+    let dateObj: Date;
+    if (newPayment.date instanceof Date) {
+      dateObj = newPayment.date;
+    } else if (typeof newPayment.date === 'string') {
+      dateObj = new Date(newPayment.date);
+      if (isNaN(dateObj.getTime())) {
+        toast({ title: "Invalid Date", description: "Please enter a valid date.", variant: "destructive" });
+        return;
       }
     } else {
-      toast({ title: "Success", description: "Entry added. No session selected for saving." });
+      dateObj = new Date();
     }
+    
+    // Calculate the month number (months since Jan 2024)
+    const monthNumber = dateToMonth(dateObj);
+    
+    // Ensure amount is a number
+    const amountValue = Number(newPayment.amount);
+    if (isNaN(amountValue)) {
+      toast({ title: "Invalid Amount", description: "Please enter a valid number for the amount.", variant: "destructive" });
+      return;
+    }
+    
+    // Determine the correct sign for the amount based on payment type
+    const amount = newPayment.type === 'payment' ? -Math.abs(amountValue) : Math.abs(amountValue);
+    
+    const paymentToAdd: Payment = {
+      id: '', // Will be set by generateStableId
+      month: monthNumber,
+      amount: amount,
+      description: newPayment.description.trim(),
+      date: dateObj,
+      type: newPayment.type as 'payment' | 'return' | 'interest',
+    };
+    
+    // Generate a stable ID for the new payment
+    paymentToAdd.id = generateStableId(paymentToAdd);
+    
+    console.log('Adding new payment to session:', sessionId, {
+      ...paymentToAdd,
+      date: dateObj.toISOString(),
+      month: monthNumber,
+      amount: amount
+    });
 
-    // Reset form and close
-    handleCancelNew();
+    try {
+      // Save to Firestore first if we have a session ID
+      if (sessionId) {
+        try {
+          // This will save to the correct session and return the session ID
+          const savedSessionId = await saveSinglePayment(paymentToAdd, sessionId);
+          console.log('Payment saved to session:', savedSessionId);
+          
+          // Update local state with the new payment
+          updatePayments([...projectData.payments, paymentToAdd]);
+          
+          toast({ 
+            title: "Success", 
+            description: `Entry added to session ${savedSessionId}.` 
+          });
+          
+          // Trigger refresh for other components
+          window.dispatchEvent(new CustomEvent('refresh-sessions'));
+        } catch (firestoreError) {
+          console.error('Error saving to Firestore:', firestoreError);
+          // Still update local state even if Firestore save fails
+          updatePayments([...projectData.payments, paymentToAdd]);
+          
+          toast({ 
+            title: "Warning", 
+            description: "Entry added locally but failed to save to the database. Changes are local only.", 
+            variant: "destructive" 
+          });
+        }
+      } else {
+        // No session ID, just update local state
+        updatePayments([...projectData.payments, paymentToAdd]);
+        toast({ 
+          title: "Warning", 
+          description: "Entry added locally. No session selected - changes won't be saved to the database.",
+          variant: "default"
+        });
+      }
+
+      // Reset form and close
+      handleCancelNew();
+    } catch (error) {
+      console.error('Error adding new payment:', error);
+      toast({ 
+        title: "Error", 
+        description: `Failed to add entry: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        variant: "destructive" 
+      });
+    }
   };
 
   const handleCancelNew = () => {

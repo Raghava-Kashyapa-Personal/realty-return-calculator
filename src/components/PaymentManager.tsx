@@ -195,29 +195,50 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
           let date: Date;
           let month: number;
           
-          // Try parsing as ISO date first (YYYY-MM-DD)
-          date = new Date(dateStr);
+          // Try parsing as Month-Year format (MMM-YYYY) first
+          const monthYearMatch = dateStr.trim().match(/^(\w{3,})-(\d{4})$/i);
           
-          if (isNaN(date.getTime())) {
-            // Try parsing as Month-Year format (MMM-YYYY)
-            const [monthName, year] = dateStr.split('-');
-            if (monthName && year) {
-              const monthIndex = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-                .findIndex(m => m.toLowerCase() === monthName.substring(0, 3).toLowerCase());
-              
-              if (monthIndex !== -1) {
-                date = new Date(parseInt(year), monthIndex, 1);
-              } else {
-                errors.push(`Line ${index + 1}: Invalid month format '${monthName}'`);
-                return;
-              }
+          if (monthYearMatch) {
+            const [_, monthPart, yearPart] = monthYearMatch;
+            const year = parseInt(yearPart);
+            
+            // Define month names and their variations
+            const monthMap: {[key: string]: number} = {
+              'jan': 0, 'january': 0,
+              'feb': 1, 'february': 1,
+              'mar': 2, 'march': 2,
+              'apr': 3, 'april': 3,
+              'may': 4,
+              'jun': 5, 'june': 5,
+              'jul': 6, 'july': 6,
+              'aug': 7, 'august': 7,
+              'sep': 8, 'september': 8,
+              'oct': 9, 'october': 9,
+              'nov': 10, 'november': 10,
+              'dec': 11, 'december': 11
+            };
+            
+            const monthIndex = monthMap[monthPart.toLowerCase()];
+            
+            if (monthIndex !== undefined && !isNaN(year)) {
+              date = new Date(year, monthIndex, 1);
+              // Calculate months since Jan 2024 (our reference point)
+              month = ((year - 2024) * 12) + monthIndex;
+              console.log(`Parsed date (MMM-YYYY): ${dateStr} -> ${monthIndex + 1}/${year} (month ${month})`);
             } else {
-              errors.push(`Line ${index + 1}: Could not parse date '${dateStr}'`);
+              errors.push(`Line ${index + 1}: Invalid month or year in '${dateStr}'`);
               return;
             }
+          } else {
+            // Fallback to Date parsing for other formats
+            date = new Date(dateStr);
+            if (isNaN(date.getTime())) {
+              errors.push(`Line ${index + 1}: Could not parse date '${dateStr}'. Expected format: MMM-YYYY (e.g., May-2025)`);
+              return;
+            }
+            // For other date formats, use the existing dateToMonth function
+            month = dateToMonth(date);
           }
-          
-          month = dateToMonth(date);
 
           // Parse amount (remove currency symbols, commas, etc.)
           const amountValue = parseFloat(amountStr.replace(/[^0-9.-]+/g, ''));

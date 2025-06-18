@@ -121,42 +121,59 @@ export const savePayments = async (payments: Payment[], sessionId?: string): Pro
  * @param projectId The project ID (optional)
  * @returns The document ID
  */
-export const saveSinglePayment = async (payment: Payment, projectId?: string): Promise<string> => {
+export const saveSinglePayment = async (payment: Payment, sessionId?: string): Promise<string> => {
   try {
-    // Get today's date as document ID (YYYY-MM-DD)
-    const today = new Date().toISOString().split('T')[0];
-    const docId = today;
+    if (!sessionId) {
+      throw new Error('Session ID is required to save a payment');
+    }
     
     // Sanitize the payment to remove any undefined values
     const sanitizedPayment = sanitizePaymentData(payment);
     
     // Check if document already exists
-    const docRef = doc(db, PAYMENTS_COLLECTION, docId);
+    const docRef = doc(db, PAYMENTS_COLLECTION, sessionId);
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
-      // Document exists, add this payment to it
+      // Document exists, add this payment to it if it doesn't already exist
       const existingData = docSnap.data();
-      const existingEntries = existingData.entries || [];
+      const existingEntries: Payment[] = existingData.entries || [];
+      
+      // Check if this payment already exists (by ID or content)
+      const paymentExists = existingEntries.some(
+        p => p.id === payment.id || 
+             (p.month === payment.month && 
+              p.amount === payment.amount && 
+              p.description === payment.description)
+      );
+      
+      if (paymentExists) {
+        console.log('Payment already exists in session, skipping duplicate');
+        return sessionId;
+      }
       
       await updateDoc(docRef, {
         entries: [...existingEntries, sanitizedPayment],
         updatedAt: Timestamp.now(),
-        count: (existingEntries.length || 0) + 1,
-        projectId: projectId || existingData.projectId
+        count: existingEntries.length + 1,
+        sessionId: sessionId
       });
+      
+      console.log(`Added payment to existing session ${sessionId}`);
     } else {
-      // Document doesn't exist, create it
+      // Document doesn't exist, create it with this payment
       await setDoc(docRef, {
         entries: [sanitizedPayment],
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         count: 1,
-        projectId: projectId
+        sessionId: sessionId
       });
+      
+      console.log(`Created new session ${sessionId} with first payment`);
     }
     
-    return docId;
+    return sessionId;
   } catch (error) {
     console.error('Error saving single payment:', error);
     throw error;
