@@ -31,9 +31,12 @@ interface ProcessFileResult {
   fileName: string;
 }
 
-// Initialize the Google Generative AI with your API key
-// You can add your API key here for testing, but make sure to move it to .env before committing
-const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY || 'AIzaSyCMnwnm5V9wBbNqTj5Vs8PePx2ddsSqHpI';
+// Initialize the Google Generative AI with your API key from environment variables
+const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
+if (!API_KEY) {
+  console.error('VITE_GOOGLE_API_KEY is not set in environment variables');
+  throw new Error('Google API key is required. Please set VITE_GOOGLE_API_KEY in your .env file');
+}
 const genAI = new GoogleGenerativeAI(API_KEY);
 
 export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClose }) => {
@@ -196,9 +199,9 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
       
       console.log(`Extracted ${text.length} characters from ${fileType} document`);
       
-      // Only add header if text was successfully extracted
+      // Return just the extracted text without adding any headers
       if (text.trim().length > 0) {
-        return `${fileType} Document: ${file.name}\n\n${text}`;
+        return text.trim();
       }
       
       // If we got here but have no text, the extraction was unsuccessful
@@ -278,10 +281,71 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
     });
   };
 
+  // Function to check if text is already in CSV format
+  const isCSVFormatted = (text: string): boolean => {
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) return false;
+    
+    // Check if first line contains CSV headers
+    const headers = lines[0].trim().split(',').map(h => h.trim().toLowerCase());
+    const hasRequiredHeaders = 
+      headers.includes('date') && 
+      headers.includes('amount') && 
+      headers.includes('description');
+    
+    if (!hasRequiredHeaders) return false;
+    
+    // Check if remaining lines have the correct number of columns
+    return lines.slice(1).every(line => {
+      const values = line.split(',').map(v => v.trim());
+      return values.length >= 3; // At least 3 columns: date, amount, description
+    });
+  };
+
+  // Function to clean and format CSV text
+  const cleanAndFormatCSV = (text: string): string => {
+    const lines = text.trim().split('\n').filter(Boolean);
+    const headerLine = 'date,amount,description';
+    
+    // If already has correct headers, process the data lines
+    if (lines[0].trim().toLowerCase() === headerLine) {
+      // Parse and reconstruct each line to ensure proper CSV formatting
+      const cleanedLines = lines.slice(1).map(line => {
+        const [date, amount, ...descParts] = line.split(',').map(s => s.trim());
+        const description = descParts.join(',').trim();
+        // Reconstruct the line with proper CSV formatting
+        return `${date},${amount},${description}`;
+      });
+      return [headerLine, ...cleanedLines].join('\n');
+    }
+    
+    // If has different headers but correct format, replace headers and process data lines
+    if (lines[0].split(',').length >= 3) {
+      const cleanedLines = lines.slice(1).map(line => {
+        const [date, amount, ...descParts] = line.split(',').map(s => s.trim());
+        const description = descParts.join(',').trim();
+        // Reconstruct the line with proper CSV formatting
+        return `${date},${amount},${description}`;
+      });
+      return [headerLine, ...cleanedLines].join('\n');
+    }
+    
+    // If format is unrecognized, return the original text with headers
+    return [headerLine, ...lines].join('\n');
+  };
+
   // Function to convert text to CSV format using Google's Generative AI (Gemini)
   const convertToCSV = async () => {
     if (!rawText.trim()) {
       toast({ title: "Error", description: "Please enter some text to convert.", variant: "destructive" });
+      return;
+    }
+
+    // Check if input is already in CSV format
+    if (isCSVFormatted(rawText)) {
+      const cleanedCSV = cleanAndFormatCSV(rawText);
+      setCsvResult(cleanedCSV);
+      toast({ title: "Success", description: "CSV data detected and formatted." });
       return;
     }
 
