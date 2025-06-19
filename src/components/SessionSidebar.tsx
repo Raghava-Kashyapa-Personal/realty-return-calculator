@@ -143,9 +143,9 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
 
   // Allow refresh via window event (for decoupled triggering)
   useEffect(() => {
-    const handler = (event: Event) => {
-      const customEvent = event as CustomEvent;
-      if (customEvent.detail === 'refresh-sessions') fetchSessions();
+    const handler = () => {
+      console.log('Received refresh-sessions event, refreshing sessions...');
+      fetchSessions();
     };
     window.addEventListener('refresh-sessions', handler);
     return () => window.removeEventListener('refresh-sessions', handler);

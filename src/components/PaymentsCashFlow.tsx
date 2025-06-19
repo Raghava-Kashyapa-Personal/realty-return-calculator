@@ -995,24 +995,59 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     <div className="space-y-4">
       {!showOnlyAnalysis && (
         <div className="space-y-3">
-          <div className="flex flex-wrap justify-end items-center gap-2 px-4 py-3">
-            <Button onClick={handleExportCSV} variant="outline" size="sm" className="h-8 gap-1">
-              <Copy className="h-3.5 w-3.5" /> Export CSV
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 px-4 py-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
+            <Button 
+              onClick={handleExportCSV} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-blue-50"
+            >
+              <span className="text-lg">📤</span>
+              <span className="text-sm font-medium">Export CSV</span>
             </Button>
-            <Button onClick={handleCalculateInterest} variant="outline" size="sm" className="h-8 gap-1">
-              <Calculator className="h-3.5 w-3.5" /> Calculate Interest
+            
+            <Button 
+              onClick={handleCalculateInterest} 
+              variant="default" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
+            >
+              <span className="text-lg">🧮</span>
+              <span className="text-sm font-medium">Calculate Interest</span>
             </Button>
-            <Button onClick={() => setIsImportOpen(true)} variant="outline" size="sm" className="h-8 gap-1">
-              <Upload className="h-3.5 w-3.5" /> Import CSV
+            
+            <Button 
+              onClick={() => setIsImportOpen(true)} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-green-50"
+            >
+              <span className="text-lg">📥</span>
+              <span className="text-sm font-medium">Import CSV</span>
             </Button>
-            <Button onClick={() => setIsAIImportOpen(true)} variant="outline" size="sm" className="h-8 gap-1">
-              <Wand2 className="h-3.5 w-3.5" /> AI Import
+            
+            <Button 
+              onClick={() => setIsAIImportOpen(true)} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-yellow-50"
+            >
+              <span className="text-lg">✨</span>
+              <span className="text-sm font-medium">AI Import</span>
             </Button>
-            <Button onClick={saveAllToFirestore} variant="outline" size="sm" className="h-8 gap-1">
-              <Save className="h-3.5 w-3.5" /> Save All
+            
+            <Button 
+              onClick={saveAllToFirestore} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-indigo-50"
+            >
+              <span className="text-lg">💾</span>
+              <span className="text-sm font-medium">Save All</span>
             </Button>
-            <Button onClick={() => setIsAddingNew(true)} size="sm" className="h-8 gap-1">
-              <Plus className="h-3.5 w-3.5" /> Add Entry
+            
+            <Button 
+              onClick={() => setIsAddingNew(true)} 
+              variant="default" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 bg-blue-600 hover:bg-blue-700"
+            >
+              <span className="text-lg text-white">➕</span>
+              <span className="text-sm font-medium text-white">Add Entry</span>
             </Button>
           </div>
           <PaymentsTable

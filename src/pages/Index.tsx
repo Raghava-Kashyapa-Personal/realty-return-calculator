@@ -212,8 +212,9 @@ const Index = () => {
         description: `Created new session: ${name}`,
       });
       
-      // Navigate to the new session
-      navigate(`/session/${sessionId}`);
+      // Don't navigate, just update the current session ID which will trigger a refresh
+      // The session data will be loaded through the existing useEffect hook
+      setCurrentSessionId(sessionId);
     } catch (error) {
       console.error('Error creating new session:', error);
       toast({
