@@ -200,7 +200,7 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                       {/* Only returns and interest should be shown as positive */}
                       {(payment.type as PaymentType) === 'return' || (payment.type as PaymentType) === 'interest' ? '+' : '-'}
                       {/* For all types, show absolute value - use 0 decimal places for all types */}
-                      {Math.abs(Math.round(payment.amount)).toLocaleString('en-IN')}
+                      {Math.abs(payment.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   )}
                 </TableCell>

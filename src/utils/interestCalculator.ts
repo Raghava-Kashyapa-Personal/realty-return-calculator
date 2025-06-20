@@ -87,16 +87,16 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
     
     let paymentEntry: Payment | null = null;
     if (monthInterest > 0) {
-      // Round to nearest whole number (no decimal places)
-      const roundedInterest = Math.round(monthInterest);
+      // Keep decimal values for precision
+      const interestAmount = monthInterest;
       
       // Create a truly unique ID by combining timestamp and a random value
       const uniqueId = `int_${monthEndDate.getTime()}_${Math.random().toString(36).substring(2, 10)}`;
       
       paymentEntry = {
         id: uniqueId, // Guaranteed unique ID
-        amount: roundedInterest, // Store as POSITIVE whole number (interest is income)
-        type: 'interest',
+        amount: interestAmount, // Keep decimal values for precision
+        type: 'interest' as const, // Explicitly type as 'interest' literal
         date: new Date(monthEndDate), 
         month: (monthEndDate.getMonth()) + (monthEndDate.getFullYear() - 2024) * 12,
         description: `Interest @ ${interestRateInternal}% (Basis: ${interestBreakdown.join(' + ') || 'N/A'})`
