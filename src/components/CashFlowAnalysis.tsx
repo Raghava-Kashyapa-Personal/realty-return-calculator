@@ -160,12 +160,14 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
   }; // Removed dependency array since it's no longer a useCallback
 
   // Currency formatter
-  const formatCurrency = (value: number) => {
+  const formatCurrency = (value: number, isInvestment: boolean = false) => {
+    // For investment values, use absolute value to remove negative sign
+    const displayValue = isInvestment ? Math.abs(value) : value;
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: 'INR',
       maximumFractionDigits: 0
-    }).format(value);
+    }).format(displayValue);
   };
   
   // Load data once when component first mounts or when tab is switched
@@ -195,9 +197,9 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
         {icon}
       </CardHeader>
-      <CardContent>
+      <CardContent className="text-left">
         <div className="text-2xl font-bold">{value}</div>
-        {description && <p className="text-xs text-muted-foreground text-left">{description}</p>}
+        {description && <p className="text-xs text-muted-foreground block text-left">{description}</p>}
       </CardContent>
     </Card>
   );
@@ -233,7 +235,7 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4">
         <MetricCard 
           title="Total Investment"
-          value={formatCurrency(analysisData.totalInvestment)}
+          value={formatCurrency(analysisData.totalInvestment, true)}
           icon={<Landmark className="h-5 w-5 text-blue-500" />}
           description="Total of Payments"
         />
