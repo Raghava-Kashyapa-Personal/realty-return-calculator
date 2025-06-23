@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Payment, IncomeItem, ProjectData } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
+import { useSession } from '@/contexts/SessionContext';
 import { CashFlowAnalysis } from '@/components/CashFlowAnalysis';
 import { PaymentsTable } from '@/components/payments/PaymentsTable';
 import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2, Loader2 } from 'lucide-react';
@@ -43,8 +44,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   updatePayments,
   showOnlyCashFlow = false,
   showOnlyAnalysis = false,
-  sessionId
+  sessionId: propSessionId
 }) => {
+  const { currentSessionId: contextSessionId } = useSession();
+  const sessionId = contextSessionId || propSessionId;
   const [csvData, setCsvData] = useState('');
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -198,7 +201,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
-  // Handle session changes - only load data explicitly requested
+  // Handle session changes - only clear payments when session changes to a new non-null value
   useEffect(() => {
     if (!sessionId) {
       console.log('No session ID, clearing payments');
@@ -208,11 +211,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
 
     console.log('Session ID changed:', sessionId);
     
-    // Clear payments when session changes - they'll be loaded manually or via explicit actions
-    updatePayments([]);
-    
-    // Clear any new session flags
+    // Only clear payments if this is a new session that we haven't loaded yet
     if (sessionStorage.getItem(`session-${sessionId}-is-new`) === 'true') {
+      console.log('New session detected, clearing existing payments');
+      updatePayments([]);
       sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
     }
   }, [sessionId]);

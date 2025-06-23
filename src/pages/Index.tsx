@@ -5,13 +5,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import PaymentsCashFlow from '@/components/PaymentsCashFlow';
 import { FinancialMetrics } from '@/components/FinancialMetrics';
-
 import { SessionSidebar } from '@/components/SessionSidebar';
 import { ProjectData, Payment } from '@/types/project';
 import { TrendingUp, BarChart3 } from 'lucide-react';
 import { fetchSession, createNewSession, deleteSession } from '@/services/firestoreService';
 import { SessionNameDialog } from '@/components/SessionNameDialog';
 import { useNavigate } from 'react-router-dom';
+import { useSession } from '@/contexts/SessionContext';
 
 const Index = () => {
   // ...existing state
@@ -61,7 +61,7 @@ const Index = () => {
   });
 
   // Session management states
-  const [currentSessionId, setCurrentSessionId] = useState<string>('');
+  const { currentSessionId, setCurrentSessionId } = useSession();
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(true);
   const { toast } = useToast();

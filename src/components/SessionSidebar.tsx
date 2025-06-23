@@ -6,6 +6,7 @@ import { Skeleton } from './ui/skeleton';
 import { X, PlusCircle, Calendar, Pencil, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
+import { useSession } from '@/contexts/SessionContext';
 
 // Define the structure of a session
 interface Session {
@@ -19,7 +20,7 @@ interface Session {
 interface SessionSidebarProps {
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
-  currentSessionId?: string;
+  currentSessionId?: string; // Keeping this for backward compatibility
   onDeleteSession?: (sessionId: string) => void;
 }
 
@@ -28,9 +29,11 @@ const PAYMENTS_COLLECTION = 'test';
 export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   onSelectSession,
   onNewSession,
-  currentSessionId,
+  currentSessionId: propCurrentSessionId,
   onDeleteSession
 }) => {
+  const { currentSessionId: contextSessionId, setCurrentSessionId } = useSession();
+  const currentSessionId = contextSessionId || propCurrentSessionId;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isOpen, setIsOpen] = useState<boolean>(true);
@@ -77,7 +80,13 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
     }
   };
 
-  // Start editing a session name
+  // Handle session selection
+  const handleSessionClick = (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+    onSelectSession(sessionId);
+    setIsOpen(false);
+  };
+
   const startEditing = (session: Session) => {
     setEditingSessionId(session.id);
     setEditingName(session.name || '');
