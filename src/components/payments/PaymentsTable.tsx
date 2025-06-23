@@ -91,17 +91,31 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
     let runningBalance = 0;
     return sortedPayments.map(payment => {
       // For running balance calculation:
-      // - Payments (negative) DECREASE the principal
-      // - Returns (positive) INCREASE the principal
-      // - Interest (positive) INCREASES principal (reduces debt)
-      runningBalance += payment.amount;
+      if (payment.type === 'return') {
+        // Returns decrease the debt (positive amount)
+        runningBalance -= payment.amount;
+      } else if (payment.type === 'payment') {
+        // Payments increase the debt (negative amount)
+        runningBalance += Math.abs(payment.amount);
+      } else if (payment.type === 'interest') {
+        // Interest increases the debt (positive amount)
+        runningBalance += payment.amount;
+      }
       return { ...payment, balance: runningBalance };
     });
   };
 
   const paymentsWithBalance = calculateRunningBalances();
   const totalPayments = payments.reduce((sum, p) => sum + (p.type === 'return' ? p.amount : -p.amount), 0);
-  const netCashFlow = payments.reduce((sum, p) => sum + (p.type === 'return' ? p.amount : -p.amount), 0);
+  const netCashFlow = payments.reduce((sum, p) => {
+    if (p.type === 'return') {
+      return sum + p.amount;  // Returns are positive (reduce debt)
+    } else if (p.type === 'payment') {
+      return sum - p.amount;  // Payments are negative (increase debt)
+    } else {
+      return sum + p.amount;  // Interest is positive (increases debt)
+    }
+  }, 0);
 
   if (payments.length === 0 && !isAddingNew) return null;
 
@@ -197,9 +211,9 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                     />
                   ) : (
                     <span className={`text-sm ${(payment.type as PaymentType) === 'return' ? 'text-green-600' : (payment.type as PaymentType) === 'interest' ? 'text-purple-600' : 'text-red-600'}`}>
-                      {/* Only returns and interest should be shown as positive */}
-                      {(payment.type as PaymentType) === 'return' || (payment.type as PaymentType) === 'interest' ? '+' : '-'}
-                      {/* For all types, show absolute value - use 0 decimal places for all types */}
+                      {/* Show + for returns, - for payments and interest */}
+                      {(payment.type as PaymentType) === 'return' ? '+' : '-'}
+                      {/* Show absolute value of amount */}
                       {Math.abs(payment.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   )}
@@ -239,7 +253,9 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                   )}
                 </TableCell>
                 <TableCell className="p-1 text-center">
-                  {formatCurrency(payment.balance)}
+                  <span className={payment.balance > 0 ? 'text-red-600' : 'text-green-600'}>
+                    {payment.balance > 0 ? '-' : ''}{formatCurrency(Math.abs(payment.balance))}
+                  </span>
                 </TableCell>
                 <TableCell className="p-1 text-center w-24">
                   {editingPayment === payment.id ? (

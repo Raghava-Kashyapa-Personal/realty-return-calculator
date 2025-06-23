@@ -123,11 +123,12 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
       }
     });
 
-    // Calculate total investment (payments + interest)
-    const totalInvestment = totalPayments;
+    // Calculate total investment (payments - interest)
+    const totalInvestment = totalPayments - totalInterestPaid;
+
     
     // Net profit calculation
-    const netProfit = totalReturns - (-totalInvestment);
+    const netProfit = totalReturns - totalInvestment;
     
     // Calculate XIRR with all cash flows
     const allCashFlows: CashFlowItem[] = [
@@ -237,7 +238,7 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
           title="Total Investment"
           value={formatCurrency(analysisData.totalInvestment, true)}
           icon={<Landmark className="h-5 w-5 text-blue-500" />}
-          description="Total of Payments"
+          description="Principal + Interest payments"
         />
         <MetricCard 
           title="Total Returns"
@@ -252,10 +253,10 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
           description="Total Returns - Total Investment"
         />
         <MetricCard 
-          title="Total Interest Earned"
+          title="Total Interest Paid"
           value={formatCurrency(analysisData.totalInterestPaid)}
           icon={<HandCoins className="h-5 w-5 text-red-500" />}
-          description="Cumulative interest income"
+          description="Cumulative interest paid on debt"
         />
         <MetricCard 
           title="XIRR"

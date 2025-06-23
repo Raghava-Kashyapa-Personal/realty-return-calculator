@@ -419,7 +419,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         const interestPaymentDate = monthEnd;
         const interestEntry = {
           id: `interest_${formatDate(interestPaymentDate, 'yyyyMMdd')}_${Math.random().toString(36).substring(2, 7)}`,
-          amount: +interest, // Interest is a negative amount (increases the debt)
+          amount: Math.abs(interest), // Store as positive for the ledger
           date: interestPaymentDate.toISOString(),
           month: parseInt(formatDate(interestPaymentDate, 'yyyyMM')),
           description: `Annual Interest @ ${annualRatePercent}% on balance of ${formatNumber(runningBalance)}`,
@@ -429,8 +429,8 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         // Add interest transaction to the working ledger
         workingLedger.push(interestEntry);
         
-        // Update the running balance to include this interest
-        runningBalance += interest;
+        // Update the running balance to include this interest (add to the debt)
+        runningBalance += Math.abs(interest);
         console.log(`[InterestDebug] Added interest: ${interest}, New Balance: ${runningBalance}`);
         
         // Mark this month as processed
