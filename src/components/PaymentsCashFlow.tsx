@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Payment, IncomeItem, ProjectData } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
@@ -56,6 +57,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isAIImportOpen, setIsAIImportOpen] = useState(false);
+  const [isClearSessionDialogOpen, setIsClearSessionDialogOpen] = useState(false);
   const [interestRate, setInterestRate] = useState<number>(projectData.annualInterestRate || 12);
   const [newPayment, setNewPayment] = useState<Partial<Payment>>({
     month: dateToMonth(new Date()),
@@ -283,7 +285,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     ];
     return calculateDerivedProjectEndDate(allNonInterestEntries as Payment[]);
   }, [projectData.payments, projectData.rentalIncome]);
-  
+
   useEffect(() => {
     const handleSessionRefresh = () => {
       if (!sessionId) {
@@ -331,7 +333,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     window.addEventListener('refresh-sessions', handleSessionRefresh);
     return () => window.removeEventListener('refresh-sessions', handleSessionRefresh);
   }, [sessionId, updatePayments, toast, generateStableId]);
-  
+
   const calculateCompoundedMonthlyInterest = (
     _inputTransactions: Payment[],
     _annualRatePercent: number
@@ -992,12 +994,22 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
+  const handleClearSession = () => {
+    updatePayments([]);
+    toast({
+      title: 'Session Cleared',
+      description: 'All entries have been removed from the current session.',
+      variant: 'default'
+    });
+    setIsClearSessionDialogOpen(false);
+  };
+
   // Return the JSX for the component
   return (
     <div className="space-y-4">
       {!showOnlyAnalysis && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 px-4 py-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
+          <div className="flex overflow-x-auto pb-2 space-x-3 px-4 py-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
             <Button 
               onClick={handleExportCSV} 
               variant="outline" 
@@ -1050,6 +1062,15 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             >
               <span className="text-lg text-white">➕</span>
               <span className="text-sm font-medium text-white">Add Entry</span>
+            </Button>
+            
+            <Button 
+              onClick={() => setIsClearSessionDialogOpen(true)} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              <span className="text-lg">🗑️</span>
+              <span className="text-sm font-medium">Clear Session</span>
             </Button>
           </div>
           <PaymentsTable
@@ -1164,6 +1185,27 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           onClose={() => setIsAIImportOpen(false)}
         />
       )}
+      
+      {/* Clear Session Confirmation Dialog */}
+      <AlertDialog open={isClearSessionDialogOpen} onOpenChange={setIsClearSessionDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear Session Data</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to clear all entries from the current session? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleClearSession}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Clear Session
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
