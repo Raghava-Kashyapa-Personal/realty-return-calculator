@@ -3,11 +3,12 @@ export const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    maximumFractionDigits: 0
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
   }).format(value);
 };
 
-export const formatNumber = (value: number, decimals: number = 0) => {
+export const formatNumber = (value: number, decimals: number = 2) => {
   return new Intl.NumberFormat('en-IN', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals
@@ -31,47 +32,37 @@ export const parseDate = (dateStr: string): number => {
   }
   
   try {
-    // Handle MMM-YYYY or Month-YYYY format (e.g., "May-2025" or "May-2025")
-    if (dateStr.includes('-')) {
-      const [monthPart, yearPart] = dateStr.split('-');
-      let month: number = 0;
-      const year = parseInt(yearPart.trim());
+    // Handle MMM-YYYY format (e.g., "May-2025")
+    const monthYearMatch = dateStr.trim().match(/^(\w{3,})-(\d{4})$/i);
+    
+    if (monthYearMatch) {
+      const [_, monthPart, yearPart] = monthYearMatch;
+      const year = parseInt(yearPart);
       
       // Define month names and their variations
-      const monthVariations = [
-        ['january', 'jan'],
-        ['february', 'feb'],
-        ['march', 'mar'],
-        ['april', 'apr'],
-        ['may'],
-        ['june', 'jun'],
-        ['july', 'jul'],
-        ['august', 'aug'],
-        ['september', 'sep'],
-        ['october', 'oct'],
-        ['november', 'nov'],
-        ['december', 'dec']
-      ];
+      const monthMap: {[key: string]: number} = {
+        'jan': 0, 'january': 0,
+        'feb': 1, 'february': 1,
+        'mar': 2, 'march': 2,
+        'apr': 3, 'april': 3,
+        'may': 4,
+        'jun': 5, 'june': 5,
+        'jul': 6, 'july': 6,
+        'aug': 7, 'august': 7,
+        'sep': 8, 'september': 8,
+        'oct': 9, 'october': 9,
+        'nov': 10, 'november': 10,
+        'dec': 11, 'december': 11
+      };
       
-      // Try to match the month part with known variations
-      const monthLower = monthPart.trim().toLowerCase();
-      const monthIndex = monthVariations.findIndex(variations => 
-        variations.some(v => monthLower.startsWith(v))
-      );
+      const monthIndex = monthMap[monthPart.toLowerCase()];
       
-      if (monthIndex >= 0) {
-        month = monthIndex + 1;
-      } else {
-        // Try to parse as month number if text parsing fails
-        const monthNum = parseInt(monthPart.trim());
-        if (!isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
-          month = monthNum;
-        }
-      }
-      
-      if (month >= 1 && month <= 12 && !isNaN(year)) {
-        // Calculate months since Jan 2024 (our reference point)
-        const monthsSinceJan2024 = ((year - 2024) * 12) + (month - 1);
+      if (monthIndex !== undefined && !isNaN(year)) {
+        // Create a date object for the first day of the month
+        const date = new Date(year, monthIndex, 1);
+        // Convert to the internal month format (months since Jan 2024)
+        const monthsSinceJan2024 = ((year - 2024) * 12) + monthIndex;
+        console.log(`Parsed date (MMM-YYYY): ${dateStr} -> ${monthIndex + 1}/${year} (${monthsSinceJan2024})`);
         return monthsSinceJan2024;
       }
     }
@@ -97,28 +88,29 @@ export const parseDate = (dateStr: string): number => {
   }
 };
 
-export const monthToDate = (month: number): Date => {
-  // Input validation
-  if (typeof month !== 'number' || isNaN(month)) {
-    console.error('Invalid month number passed to monthToDate:', month);
+export const monthToDate = (monthNumber: number): Date => {
+  // Handle invalid month values
+  if (typeof monthNumber !== 'number' || isNaN(monthNumber)) {
+    console.error('Invalid month number passed to monthToDate:', monthNumber);
     return new Date(); // Return current date as fallback
   }
   
-  // For negative months or months < 0, we need special handling
-  if (month < 0) {
-    console.warn('Negative month number in monthToDate:', month, 'using 0 instead');
-    month = 0;
+  // For negative months, clamp to 0 (Jan 2024)
+  if (monthNumber < 0) {
+    console.warn('Negative month number in monthToDate:', monthNumber, 'using 0 instead (Jan 2024)');
+    monthNumber = 0;
   }
   
-  // Debug
-  console.log(`monthToDate converting month ${month} to date`);
+  const baseYear = 2024;
+  const baseMonth = 0; // January (0-based)
   
-  // Simple direct calculation: month 0 = Jan 2024
-  const year = 2024 + Math.floor(month / 12);
-  const monthIndex = month % 12;
+  // Calculate the actual year and month
+  const totalMonths = monthNumber + baseMonth;
+  const year = baseYear + Math.floor(totalMonths / 12);
+  const monthIndex = totalMonths % 12;
   
   const result = new Date(year, monthIndex, 1);
-  console.log(`monthToDate result: ${result.toISOString()} (year: ${year}, month: ${monthIndex})`);
+  console.log(`monthToDate: ${monthNumber} -> ${year}-${monthIndex + 1} (${result.toISOString()})`);
   return result;
 };
 
@@ -129,10 +121,17 @@ export const dateToMonth = (date: Date): number => {
     return 0; // Return a safe default
   }
   
-  // Simple direct conversion: Jan 2024 = month 0
-  const year = date.getFullYear();
-  const month = date.getMonth(); // 0-based month index
+  const baseYear = 2024;
+  const baseMonth = 0; // January (0-based)
   
-  // Calculate relative to 2024 base year
-  return (year - 2024) * 12 + month;
+  const currentYear = date.getFullYear();
+  const currentMonth = date.getMonth(); // 0-based month index
+  
+  // Calculate the difference in years and add the month difference
+  const yearDiff = currentYear - baseYear;
+  const monthDiff = (yearDiff * 12) + (currentMonth - baseMonth);
+  
+  console.log(`dateToMonth: ${date.toISOString()} -> (${currentYear}-${currentMonth + 1}) = ${monthDiff} months since ${baseYear}-${baseMonth + 1}`);
+  
+  return monthDiff;
 };

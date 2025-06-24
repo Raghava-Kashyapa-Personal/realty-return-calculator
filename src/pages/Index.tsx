@@ -5,13 +5,49 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import PaymentsCashFlow from '@/components/PaymentsCashFlow';
 import { FinancialMetrics } from '@/components/FinancialMetrics';
-import FirestoreDemo from '@/components/FirestoreDemo';
 import { SessionSidebar } from '@/components/SessionSidebar';
 import { ProjectData, Payment } from '@/types/project';
-import { TrendingUp, BarChart3, Database } from 'lucide-react';
-import { fetchSession, createNewSession } from '@/services/firestoreService';
+import { TrendingUp, BarChart3 } from 'lucide-react';
+import { fetchSession, createNewSession, deleteSession } from '@/services/firestoreService';
+import { SessionNameDialog } from '@/components/SessionNameDialog';
+import { useNavigate } from 'react-router-dom';
+import { useSession } from '@/contexts/SessionContext';
 
 const Index = () => {
+  // ...existing state
+
+  // Handle session deletion
+  const handleDeleteSession = async (sessionId: string) => {
+    setIsLoading(true);
+    try {
+      await deleteSession(sessionId);
+      toast({ title: 'Session Deleted', description: `Session ${sessionId} deleted.` });
+      // If deleted session is current, clear selection
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId('');
+        setProjectData({
+          projectName: 'New Project',
+          annualInterestRate: 12,
+          purchasePrice: 0,
+          closingCosts: 0,
+          repairs: 0,
+          afterRepairValue: 0,
+          otherInitialCosts: 0,
+          payments: [],
+          rentalIncome: [],
+        });
+      }
+      // Refresh sidebar
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('refresh-sessions', { detail: 'refresh-sessions' }));
+      }, 300);
+    } catch (error) {
+      toast({ title: 'Error', description: 'Failed to delete session', variant: 'destructive' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const [projectData, setProjectData] = useState<ProjectData>({
     projectName: 'New Project',
     annualInterestRate: 12, // 12% annual interest rate
@@ -25,7 +61,7 @@ const Index = () => {
   });
 
   // Session management states
-  const [currentSessionId, setCurrentSessionId] = useState<string>('');
+  const { currentSessionId, setCurrentSessionId } = useSession();
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(true);
   const { toast } = useToast();
@@ -103,11 +139,23 @@ const Index = () => {
     }, 100);
   };
 
-  // Create a new session
-  const handleNewSession = async () => {
+  // State for session name dialog
+  const [isSessionDialogOpen, setIsSessionDialogOpen] = useState(false);
+  const [pendingSessionName, setPendingSessionName] = useState('');
+
+  // Handle new session button click
+  const handleNewSessionClick = () => {
+    setPendingSessionName('');
+    setIsSessionDialogOpen(true);
+  };
+
+  // Create a new session with the given name
+  const handleCreateSession = async (sessionName: string) => {
     setIsLoading(true);
+    setIsSessionDialogOpen(false);
+    
     try {
-      const { sessionId } = await createNewSession();
+      const { sessionId, name } = await createNewSession(sessionName);
       
       // Mark this as a new session in localStorage
       localStorage.setItem(`session-${sessionId}-is-new`, 'true');
@@ -115,7 +163,7 @@ const Index = () => {
       
       // Reset project data for new session
       const newProjectData = {
-        projectName: `Project ${new Date().toLocaleDateString()}`,
+        projectName: name, // Use the session name as the default project name
         annualInterestRate: 12,
         purchasePrice: 0,
         closingCosts: 0,
@@ -132,7 +180,7 @@ const Index = () => {
       // Store initial empty state in localStorage
       localStorage.setItem(`session-data-${sessionId}`, JSON.stringify([]));
       
-      // CRITICAL FIX: Set the current session ID immediately
+      // Set the current session ID immediately
       setCurrentSessionId(sessionId);
       
       // Force refresh the SessionSidebar component by fetching sessions
@@ -157,12 +205,16 @@ const Index = () => {
       };
       
       // Execute the refresh function
-      refreshSessions();
+      await refreshSessions();
       
       toast({
         title: 'New Session Created',
-        description: `Created new session: ${sessionId}`,
+        description: `Created new session: ${name}`,
       });
+      
+      // Don't navigate, just update the current session ID which will trigger a refresh
+      // The session data will be loaded through the existing useEffect hook
+      setCurrentSessionId(sessionId);
     } catch (error) {
       console.error('Error creating new session:', error);
       toast({
@@ -183,13 +235,23 @@ const Index = () => {
     setProjectData(prev => ({ ...prev, payments }));
   };
 
+  const navigate = useNavigate();
+
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
       {/* Session Sidebar */}
       <SessionSidebar 
-        onSelectSession={handleSelectSession}
-        onNewSession={handleNewSession}
+        onSelectSession={handleSelectSession} 
+        onNewSession={handleNewSessionClick} 
         currentSessionId={currentSessionId}
+        onDeleteSession={handleDeleteSession}
+      />
+      
+      <SessionNameDialog
+        open={isSessionDialogOpen}
+        onOpenChange={setIsSessionDialogOpen}
+        onSave={handleCreateSession}
+        defaultName={pendingSessionName}
       />
       
       {/* Main Content */}
@@ -205,18 +267,14 @@ const Index = () => {
         </div>
 
         <Tabs defaultValue="cashflow" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="cashflow" className="flex items-center gap-2">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="cashflow" className="flex items-center justify-center gap-2">
               <TrendingUp className="w-4 h-4" />
               <span>Cash Flow</span>
             </TabsTrigger>
-            <TabsTrigger value="analysis" className="flex items-center gap-2">
+            <TabsTrigger value="analysis" className="flex items-center justify-center gap-2">
               <BarChart3 className="w-4 h-4" />
               <span>Analysis & Setup</span>
-            </TabsTrigger>
-            <TabsTrigger value="database" className="flex items-center gap-2">
-              <Database className="w-4 h-4" />
-              <span>Database</span>
             </TabsTrigger>
           </TabsList>
 
@@ -261,19 +319,7 @@ const Index = () => {
             </div>
           </TabsContent>
           
-          <TabsContent value="database">
-            <Card className="shadow-sm border-gray-200">
-              <CardHeader className="pb-2 px-4 pt-3">
-                <CardTitle className="flex items-center text-base font-medium text-gray-700 gap-1.5">
-                  <Database className="w-4 h-4 text-blue-600" />
-                  Firebase Storage
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4">
-                <FirestoreDemo />
-              </CardContent>
-            </Card>
-          </TabsContent>
+
         </Tabs>
       </div>
     </div>

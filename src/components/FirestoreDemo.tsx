@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../firebaseConfig';
 import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import FirestoreCSVImporter from './FirestoreCSVImporter';
-import FirebaseConnectionTest from './FirebaseConnectionTest';
 import FirestoreOfflineSupport from './FirestoreOfflineSupport';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Database, CalendarClock } from 'lucide-react';
@@ -65,7 +64,6 @@ const FirestoreDemo: React.FC = () => {
   return (
     <div className="space-y-6">
       <FirestoreOfflineSupport />
-      <FirebaseConnectionTest />
       <FirestoreCSVImporter 
         collectionName={COLLECTION_NAME} 
         onImportSuccess={handleImportSuccess} 

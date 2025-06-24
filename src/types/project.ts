@@ -1,12 +1,22 @@
 
+export interface InterestBreakdownItem {
+  fromDate: string;
+  toDate: string;
+  days: number;
+  principal: number;
+  rate: number;
+  interest: number;
+}
+
 export interface Payment {
   id: string;
   month: number;
   amount: number;
-  description?: string;
+  description?: string | any; // Allow React nodes for formatted descriptions
   debtFunded?: boolean;
   date?: Date | string;
   type?: 'payment' | 'return' | 'interest';
+  breakdown?: InterestBreakdownItem[];
 }
 
 export interface IncomeItem {
