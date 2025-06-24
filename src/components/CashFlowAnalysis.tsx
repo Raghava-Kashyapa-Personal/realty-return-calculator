@@ -128,7 +128,7 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
 
     
     // Net profit calculation
-    const netProfit = totalReturns - totalInvestment;
+    const netProfit = totalReturns + totalInvestment;
     
     // Calculate XIRR with all cash flows
     const allCashFlows: CashFlowItem[] = [

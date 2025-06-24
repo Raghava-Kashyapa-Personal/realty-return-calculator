@@ -17,6 +17,36 @@ The Realty Return Calculator provides tools for:
 - Importing/exporting cash flow data via CSV
 - Viewing a detailed table of all cash flow entries (payments, returns, interest) with running balances
 
+## Environment Setup
+
+### Prerequisites
+- Node.js (v16 or higher)
+- npm or yarn
+- Google API Key (for Gemini AI features)
+- Firebase credentials (if using Firebase)
+
+### Configuration
+
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Update the `.env` file with your actual API keys:
+   ```
+   VITE_GOOGLE_API_KEY=your_google_api_key_here
+   VITE_FIREBASE_API_KEY=your_firebase_api_key_here
+   # ... other environment variables
+   ```
+
+### Security Best Practices
+
+- **Never commit your `.env` file** - It's already in `.gitignore`
+- Use different API keys for development and production
+- Restrict API key usage in Google Cloud Console
+- Rotate your API keys periodically
+- Use environment variables for all sensitive data
+
 ## Technologies Used
 
 This project is built with:

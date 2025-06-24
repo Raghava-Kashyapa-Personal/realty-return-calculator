@@ -7,13 +7,13 @@ import { getDatabase } from "firebase/database";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyCkXAyeDMosS8YlSfjKPEmWqbkXn0jBoPE",
-  authDomain: "equity-qualitas.firebaseapp.com",
-  databaseURL: "https://equity-qualitas-default-rtdb.firebaseio.com",
-  projectId: "equity-qualitas",
-  storageBucket: "equity-qualitas.firebasestorage.app",
-  messagingSenderId: "898965383489",
-  appId: "1:898965383489:web:779c0e6547ef20c23e19c0"
+  apiKey: "AIzaSyCpn7HGEITSRMFtoH08qgk74mrx9qivQaQ",
+  authDomain: "newproj-e3530.firebaseapp.com",
+  projectId: "newproj-e3530",
+  storageBucket: "newproj-e3530.firebasestorage.app",
+  messagingSenderId: "710119677915",
+  appId: "1:710119677915:web:0a6ef5f44ce1884d8351fe",
+  measurementId: "G-X6Z2L8RZT6"
 };
 
 // Initialize Firebase
