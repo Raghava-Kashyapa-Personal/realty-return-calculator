@@ -98,7 +98,7 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
         amount: -roundedInterest, // Store as NEGATIVE with 2 decimal precision
         type: 'interest',
         date: new Date(monthEndDate), 
-        month: (monthEndDate.getMonth()) + (monthEndDate.getFullYear() * 12),
+        month: (monthEndDate.getMonth()) + (monthEndDate.getFullYear() - 2024) * 12,
         description: `Interest @ ${interestRateInternal}% (Basis: ${interestBreakdown.join(' + ') || 'N/A'})`
       };
     }
@@ -134,6 +134,13 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
     // For now, we proceed assuming payments define principal changes.
   }
 
+  // Clear existing interest payments first to avoid duplicates
+  const existingInterestPayments = payments.filter(p => p.type === 'interest');
+  // If we're recalculating, remove any existing interest payments to avoid duplicates
+  if (existingInterestPayments.length > 0) {
+    console.log(`Removing ${existingInterestPayments.length} existing interest payments for recalculation`);
+  }
+  
   // Sort dates for analysis
   const allSortedPrincipalPayments = paymentsWithoutInterest.sort((a, b) => {
     // Ensure we have proper Date objects for comparison
@@ -176,8 +183,12 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
     lastPaymentDate = endOfMonth(allSortedPrincipalPayments[allSortedPrincipalPayments.length - 1].date ? new Date(allSortedPrincipalPayments[allSortedPrincipalPayments.length - 1].date) : monthToDate(allSortedPrincipalPayments[allSortedPrincipalPayments.length - 1].month));
   }
   
-  // If there are payments, iterate from the month of the first payment to the month of the last payment
-  if (firstPaymentDate && lastPaymentDate) {
+  // If there are payments, iterate from the month of the first payment to either the end date or a reasonable number of months into the future
+  if (firstPaymentDate) {
+    // If no explicit last payment date or if user wants to calculate interest until projectEndDate
+    if (!lastPaymentDate || (projectEndDate && isAfter(projectEndDate, lastPaymentDate))) {
+      lastPaymentDate = projectEndDate || addMonths(new Date(), 6); // Use project end date or 6 months into future as fallback
+    }
     let currentLoopMonthDate = new Date(firstPaymentDate);
 
     while (currentLoopMonthDate.getTime() <= lastPaymentDate.getTime()) {
@@ -219,7 +230,8 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
       // Calculate interest for the current month if there was a balance or payments contributing to it
       // The interest calculation itself uses balanceAtStartOfThisMonth for the full-month part,
       // and paymentsInCurrentLoopMonth for pro-rata parts.
-      if (balanceAtStartOfThisMonth > 0 || paymentsInCurrentLoopMonth.some(p => p.amount < 0)) {
+      // Interest should be calculated for every month once there's a positive balance
+      if (runningBalance > 0) {
         const interestDetails = calculateInterestDetailsForMonth(balanceAtStartOfThisMonth, paymentsInCurrentLoopMonth, currentMonthStart, dailyRate, monthlyRate, interestRate);
         if (interestDetails.paymentEntry) {
           newInterestPayments.push(interestDetails.paymentEntry);
@@ -236,10 +248,19 @@ export const calculateMonthlyInterestLogic = ({ payments, interestRate, projectE
 
   // Future interest calculation (compounds on the final runningBalance)
   if (runningBalance > 0 && interestRate > 0) {
-    let futureProcessingDate = lastPaymentDate ? addMonths(startOfMonth(lastPaymentDate),1) : startOfMonth(new Date());
-    // If no payments, start future interest from next month of current date.
-    if (allSortedPrincipalPayments.length === 0) {
-        futureProcessingDate = addMonths(startOfMonth(new Date()), 1);
+    // Always start future interest from the month after the last calculated interest payment or last principal payment
+    let futureProcessingDate;
+    
+    if (newInterestPayments.length > 0) {
+      // If we have calculated interest already, start from the month after the last interest payment
+      const lastInterestDate = new Date(newInterestPayments[newInterestPayments.length - 1].date);
+      futureProcessingDate = addMonths(startOfMonth(lastInterestDate), 1);
+    } else if (lastPaymentDate) {
+      // If no interest calculated yet, but we have principal payments, start from the month after the last payment
+      futureProcessingDate = addMonths(startOfMonth(lastPaymentDate), 1);
+    } else {
+      // If no payments at all, start from next month of current date
+      futureProcessingDate = addMonths(startOfMonth(new Date()), 1);
     }
 
     const maxFutureMonths = 3; // Default future months if no projectEndDate
