@@ -68,8 +68,9 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   });
   const { toast } = useToast();
 
-  const [currentInterestDetails, setCurrentInterestDetails] = useState<{ newInterestPayments: Payment[] } | null>(null);
+  const [currentInterestDetails, setCurrentInterestDetails] = useState<{ newInterestPayments: Payment[], interestRate: number } | null>(null);
   const [isFetching, setIsFetching] = useState(false);
+  const [lastSavedInterestRate, setLastSavedInterestRate] = useState<number | null>(null);
 
   // Reset interest details when core data changes
   useEffect(() => {
@@ -977,20 +978,81 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
 
   const saveAllToFirestore = async () => {
     if (!sessionId) {
-      toast({ title: 'No Session Selected', description: 'Please select or create a session first.', variant: 'destructive' });
+      toast({ 
+        title: 'No Session Selected', 
+        description: 'Please select or create a session first.', 
+        variant: 'destructive' 
+      });
       return;
     }
     
     try {
-      await saveProjectData(projectData, sessionId);
-      await savePayments(projectData.payments, sessionId);
-      toast({ title: 'Data Saved', description: `All project data saved to session: ${sessionId}` });
+      // First, get all non-interest payments
+      const nonInterestPayments = projectData.payments.filter(p => p.type !== 'interest');
+      
+      // Process rental income into returns
+      const returnsFromIncomeStream: Payment[] = projectData.rentalIncome.map((r, i) => ({
+        id: r.id || `return_income_${i}_${r.month}_${r.amount}`,
+        month: r.month,
+        amount: r.amount,
+        description: r.description || (r.type === 'sale' ? `Property Sale` : `Rental Income`),
+        date: r.date || monthToDate(r.month),
+        type: 'return',
+      }));
+
+      // Combine non-interest payments and returns
+      const allBaseTransactions = [...nonInterestPayments, ...returnsFromIncomeStream];
+      
+      // Calculate new interest with current rate
+      const newLedgerWithInterest = calculateCompoundedMonthlyInterest(allBaseTransactions, interestRate);
+      
+      // Create a complete list of payments (non-interest + new interest)
+      const updatedPayments = [...nonInterestPayments, ...newLedgerWithInterest.filter(p => p.type === 'interest')];
+      
+      // Update local state
+      updatePayments(updatedPayments);
+      
+      // Update project data with the new payments and interest rate
+      const updatedProjectData = {
+        ...projectData,
+        payments: updatedPayments,
+        annualInterestRate: interestRate
+      };
+      
+      // Save to Firestore - first clear existing payments
+      const docRef = doc(db, 'test', sessionId);
+      await setDoc(docRef, {
+        entries: updatedPayments.map(p => ({
+          ...p,
+          // Ensure date is properly formatted for Firestore
+          date: p.date ? (typeof p.date === 'string' ? p.date : p.date.toISOString()) : null
+        })),
+        updatedAt: new Date(),
+        count: updatedPayments.length,
+        sessionId: sessionId
+      }, { merge: true });
+      
+      // Also update the project data
+      await saveProjectData(updatedProjectData, sessionId);
+      
+      // Update the last saved interest rate
+      setLastSavedInterestRate(interestRate);
+      
+      toast({ 
+        title: 'Data and Interest Updated', 
+        description: `Project data saved with updated interest calculations to session: ${sessionId}` 
+      });
       
       // Trigger refresh for other components
       window.dispatchEvent(new CustomEvent('refresh-sessions'));
+      
     } catch (error) {
       console.error('Error saving to Firestore:', error);
-      toast({ title: 'Error', description: 'Failed to save data to the database.', variant: 'destructive' });
+      toast({ 
+        title: 'Error', 
+        description: `Failed to save data to the database: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        variant: 'destructive' 
+      });
     }
   };
 
