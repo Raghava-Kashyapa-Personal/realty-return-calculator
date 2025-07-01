@@ -3,9 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Payment, IncomeItem, ProjectData } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
+import { useSession } from '@/contexts/SessionContext';
 import { CashFlowAnalysis } from '@/components/CashFlowAnalysis';
 import { PaymentsTable } from '@/components/payments/PaymentsTable';
 import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2, Loader2 } from 'lucide-react';
@@ -43,8 +45,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   updatePayments,
   showOnlyCashFlow = false,
   showOnlyAnalysis = false,
-  sessionId
+  sessionId: propSessionId
 }) => {
+  const { currentSessionId: contextSessionId } = useSession();
+  const sessionId = contextSessionId || propSessionId;
   const [csvData, setCsvData] = useState('');
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -53,6 +57,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isAIImportOpen, setIsAIImportOpen] = useState(false);
+  const [isClearSessionDialogOpen, setIsClearSessionDialogOpen] = useState(false);
   const [interestRate, setInterestRate] = useState<number>(projectData.annualInterestRate || 12);
   const [newPayment, setNewPayment] = useState<Partial<Payment>>({
     month: dateToMonth(new Date()),
@@ -63,8 +68,9 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   });
   const { toast } = useToast();
 
-  const [currentInterestDetails, setCurrentInterestDetails] = useState<{ newInterestPayments: Payment[] } | null>(null);
+  const [currentInterestDetails, setCurrentInterestDetails] = useState<{ newInterestPayments: Payment[], interestRate: number } | null>(null);
   const [isFetching, setIsFetching] = useState(false);
+  const [lastSavedInterestRate, setLastSavedInterestRate] = useState<number | null>(null);
 
   // Reset interest details when core data changes
   useEffect(() => {
@@ -198,30 +204,31 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
-  // Auto-load data when sessionId changes, but only once per session
+  // Handle session changes - only clear payments when session changes to a new non-null value
   useEffect(() => {
-    if (!sessionId) return;
-
-    // Check if this is a new session that should start empty
-    const isNewSession = sessionId.includes('new-') ||
-                         sessionStorage.getItem(`session-${sessionId}-is-new`) === 'true' ||
-                         sessionId.startsWith('session-') && sessionId.includes('new');
-
-    if (isNewSession) {
-      console.log('New session detected, starting with empty payments');
-      // Clear any existing payments for new sessions
+    if (!sessionId) {
+      console.log('No session ID, clearing payments');
       updatePayments([]);
-      sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
       return;
     }
+
+    console.log('Session ID changed:', sessionId);
     
-    // Only fetch if we haven't loaded this session yet
-    if (!loadedSessions.has(sessionId)) {
-      fetchDataFromFirestore();
-      // Mark this session as loaded to prevent infinite loops
-      setLoadedSessions(prev => new Set([...prev, sessionId]));
+    // Only clear payments if this is a new session that we haven't loaded yet
+    if (sessionStorage.getItem(`session-${sessionId}-is-new`) === 'true') {
+      console.log('New session detected, clearing existing payments');
+      updatePayments([]);
+      sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
     }
-  }, [sessionId, projectData.payments, loadedSessions]);
+  }, [sessionId]);
+  
+  // Clear loaded sessions when component unmounts to ensure fresh data on next mount
+  useEffect(() => {
+    return () => {
+      console.log('Clearing loaded sessions on unmount');
+      setLoadedSessions(new Set());
+    };
+  }, []);
 
   // Add listener for session refresh events
   useEffect(() => {
@@ -279,7 +286,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     ];
     return calculateDerivedProjectEndDate(allNonInterestEntries as Payment[]);
   }, [projectData.payments, projectData.rentalIncome]);
-  
+
   useEffect(() => {
     const handleSessionRefresh = () => {
       if (!sessionId) {
@@ -327,7 +334,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     window.addEventListener('refresh-sessions', handleSessionRefresh);
     return () => window.removeEventListener('refresh-sessions', handleSessionRefresh);
   }, [sessionId, updatePayments, toast, generateStableId]);
-  
+
   const calculateCompoundedMonthlyInterest = (
     _inputTransactions: Payment[],
     _annualRatePercent: number
@@ -417,18 +424,18 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         const interestPaymentDate = monthEnd;
         const interestEntry = {
           id: `interest_${formatDate(interestPaymentDate, 'yyyyMMdd')}_${Math.random().toString(36).substring(2, 7)}`,
-          amount: -interest, // Interest is a negative amount (increases the debt)
+          amount: Math.abs(interest), // Store as positive for the ledger
           date: interestPaymentDate.toISOString(),
           month: parseInt(formatDate(interestPaymentDate, 'yyyyMM')),
-          description: `Interest @ ${annualRatePercent}% on balance of ${formatNumber(runningBalance)}`,
+          description: `Annual Interest @ ${annualRatePercent}% on balance of ${formatNumber(runningBalance)}`,
           type: 'interest' as const,
         };
         
         // Add interest transaction to the working ledger
         workingLedger.push(interestEntry);
         
-        // Update the running balance to include this interest
-        runningBalance += interest;
+        // Update the running balance to include this interest (add to the debt)
+        runningBalance += Math.abs(interest);
         console.log(`[InterestDebug] Added interest: ${interest}, New Balance: ${runningBalance}`);
         
         // Mark this month as processed
@@ -579,13 +586,16 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       return;
     }
 
-    const lines = csvText.trim().split('\n');
+    const lines = csvText.trim().split(/\r?\n/); // Handle both Unix and Windows line endings
     const newPayments: Payment[] = [];
     const errors: string[] = [];
+    
+    // Check if first line is a header
     const headerTest = lines[0]?.toLowerCase() || '';
     const hasHeader = headerTest.includes('date') || headerTest.includes('amount');
+    let startLine = hasHeader ? 1 : 0;
 
-    for (let i = hasHeader ? 1 : 0; i < lines.length; i++) {
+    for (let i = startLine; i < lines.length; i++) {
       try {
         const line = lines[i].trim();
         if (!line) continue;
@@ -595,65 +605,130 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           console.log(`Skipping header row at line ${i + 1}`);
           continue;
         }
+
+        // Handle quoted fields and commas within quotes
+        const columns: string[] = [];
+        let current = '';
+        let inQuotes = false;
         
-        // Robustly parse CSV lines where amounts may contain commas
-        // Assumes format: Date, [Amount parts...], Description
-        const parts = line.split(',');
-        if (parts.length < 3) {
-          errors.push(`Line ${i + 1}: Malformed line. Expected: Date,Amount,Description`);
+        for (let j = 0; j < line.length; j++) {
+          const char = line[j];
+          const nextChar = line[j + 1];
+          
+          if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+              // Handle escaped quote
+              current += '"';
+              j++; // Skip next quote
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (char === ',' && !inQuotes) {
+            columns.push(current.trim());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        columns.push(current.trim());
+
+        // We need at least date and amount
+        if (columns.length < 2) {
+          errors.push(`Line ${i + 1}: Invalid format. Expected at least Date and Amount.`);
           continue;
         }
 
-        const dateStr = parts[0].trim();
-        const description = parts[parts.length - 1].trim();
-        const amountStr = parts.slice(1, -1).join('').trim();
+        const dateStr = columns[0].trim();
+        const amountStr = columns[1].trim();
+        const description = columns[2]?.trim() || '';
 
-        const month = parseDate(dateStr);
-        if (month <= 0) {
-          errors.push(`Line ${i + 1}: Could not parse date '${dateStr}'.`);
-          continue;
+        // Parse date - handle multiple formats
+        let month = 0;
+        let entryDate: Date;
+        
+        // Try parsing as MMM-YYYY format (e.g., May-2025)
+        const monthYearMatch = dateStr.match(/^(\w{3})-(\d{4})$/i);
+        if (monthYearMatch) {
+          const [_, monthName, year] = monthYearMatch;
+          const monthIndex = new Date(`${monthName} 1, ${year}`).getMonth();
+          if (!isNaN(monthIndex)) {
+            month = parseInt(`${year}${String(monthIndex + 1).padStart(2, '0')}`, 10);
+            entryDate = new Date(parseInt(year), monthIndex, 1);
+          } else {
+            errors.push(`Line ${i + 1}: Invalid month '${monthName}' in date '${dateStr}'. Use format: MMM-YYYY (e.g., May-2025)`);
+            continue;
+          }
+        } 
+        // Try parsing as ISO date (YYYY-MM-DD) as fallback
+        else {
+          const isoDate = new Date(dateStr);
+          if (!isNaN(isoDate.getTime())) {
+            month = parseInt(formatDate(isoDate, 'yyyyMM'), 10);
+            entryDate = isoDate;
+          } else {
+            // Try the original parseDate as last resort
+            month = parseDate(dateStr);
+            if (month <= 0) {
+              errors.push(`Line ${i + 1}: Could not parse date '${dateStr}'. Use format: MMM-YYYY (e.g., May-2025) or YYYY-MM-DD`);
+              continue;
+            }
+            entryDate = monthToDate(month);
+          }
         }
-        const entryDate = monthToDate(month);
 
+        // Parse amount - handle currency symbols and thousand separators
         const amount = parseCurrencyAmount(amountStr);
         if (isNaN(amount)) {
-          errors.push(`Line ${i + 1}: Invalid amount format '${amountStr}'.`);
+          errors.push(`Line ${i + 1}: Invalid amount format '${amountStr}'. Expected a number.`);
           continue;
         }
 
+        // Determine transaction type based on amount and description
         let type: 'payment' | 'return' | 'interest' = 'payment';
-        if (amount > 0 || ['rent', 'income', 'return', 'sale'].some(term => description.toLowerCase().includes(term))) {
-          type = 'return';
+        const descLower = description.toLowerCase();
+        
+        if (amount > 0 || 
+            ['rent', 'income', 'return', 'sale', 'interest'].some(term => 
+              descLower.includes(term)
+            )) {
+          type = amount > 0 ? 'return' : 'payment';
+          if (descLower.includes('interest')) {
+            type = 'interest';
+          }
         }
 
+        // Create payment entry with proper typing
         const paymentEntry: Payment = {
-          id: '', // Temporary ID, will be replaced
+          id: '', // Will be set by generateStableId
           month,
-          amount: type === 'payment' ? -Math.abs(amount) : Math.abs(amount),
-          description,
+          amount: type === 'payment' || type === 'interest' ? -Math.abs(amount) : Math.abs(amount),
+          description: description || (type === 'return' ? 'Income' : 'Payment'),
           type,
           date: entryDate
         };
         
-        // Use our consistent ID generation helper
+        // Generate stable ID
         paymentEntry.id = generateStableId(paymentEntry);
+        newPayments.push(paymentEntry);
         
-        newPayments.push({
-          ...paymentEntry,
-          month,
-          amount: type === 'payment' ? -Math.abs(amount) : Math.abs(amount),
-          description,
-          type,
-          date: entryDate
-        });
       } catch (lineError) {
+        console.error(`Error processing line ${i + 1}:`, lineError);
         errors.push(`Line ${i + 1}: ${(lineError as Error).message}`);
       }
     }
 
     if (errors.length > 0) {
       console.warn('CSV import errors:', errors);
-      toast({ title: "Import Warning", description: `Encountered ${errors.length} errors during import.`, variant: "destructive" });
+      const errorMessage = errors.length > 5 
+        ? `Encountered ${errors.length} errors. First 5: ${errors.slice(0, 5).join(' ')}...`
+        : `Encountered errors: ${errors.join(' ')}`;
+      
+      toast({ 
+        title: "Import Warning", 
+        description: errorMessage, 
+        variant: "destructive",
+        duration: 10000 // Show for 10 seconds to allow reading longer messages
+      });
     }
 
     if (newPayments.length > 0) {
@@ -745,42 +820,101 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       return;
     }
 
-    const dateObj = newPayment.date instanceof Date ? newPayment.date : 
-                   (typeof newPayment.date === 'string' ? new Date(newPayment.date) : new Date());
-    
-    const paymentToAdd: Payment = {
-      id: '', // Temporary ID, will be replaced
-      month: dateToMonth(dateObj),
-      amount: newPayment.type === 'payment' ? -Math.abs(Number(newPayment.amount)) : Math.abs(Number(newPayment.amount)),
-      description: newPayment.description,
-      date: dateObj,
-      type: newPayment.type as 'payment' | 'return',
-    };
-    
-    // Use our consistent ID generation helper
-    paymentToAdd.id = generateStableId(paymentToAdd);
-
-    // Update UI with new payment
-    updatePayments([...projectData.payments, paymentToAdd]);
-
-    // Save to Firestore if we have a session ID
-    if (sessionId) {
-      try {
-        await saveSinglePayment(paymentToAdd, sessionId);
-        toast({ title: "Success", description: "Entry added and saved to the database." });
-        
-        // Trigger refresh for other components
-        window.dispatchEvent(new CustomEvent('refresh-sessions'));
-      } catch (firestoreError) {
-        console.error('Error saving to Firestore:', firestoreError);
-        toast({ title: "Warning", description: "Entry added but failed to save to the database.", variant: "destructive" });
+    // Ensure we have a valid date
+    let dateObj: Date;
+    if (newPayment.date instanceof Date) {
+      dateObj = newPayment.date;
+    } else if (typeof newPayment.date === 'string') {
+      dateObj = new Date(newPayment.date);
+      if (isNaN(dateObj.getTime())) {
+        toast({ title: "Invalid Date", description: "Please enter a valid date.", variant: "destructive" });
+        return;
       }
     } else {
-      toast({ title: "Success", description: "Entry added. No session selected for saving." });
+      dateObj = new Date();
     }
+    
+    // Calculate the month number (months since Jan 2024)
+    const monthNumber = dateToMonth(dateObj);
+    
+    // Ensure amount is a number
+    const amountValue = Number(newPayment.amount);
+    if (isNaN(amountValue)) {
+      toast({ title: "Invalid Amount", description: "Please enter a valid number for the amount.", variant: "destructive" });
+      return;
+    }
+    
+    // Determine the correct sign for the amount based on payment type
+    const amount = newPayment.type === 'payment' ? -Math.abs(amountValue) : Math.abs(amountValue);
+    
+    const paymentToAdd: Payment = {
+      id: '', // Will be set by generateStableId
+      month: monthNumber,
+      amount: amount,
+      description: newPayment.description.trim(),
+      date: dateObj,
+      type: newPayment.type as 'payment' | 'return' | 'interest',
+    };
+    
+    // Generate a stable ID for the new payment
+    paymentToAdd.id = generateStableId(paymentToAdd);
+    
+    console.log('Adding new payment to session:', sessionId, {
+      ...paymentToAdd,
+      date: dateObj.toISOString(),
+      month: monthNumber,
+      amount: amount
+    });
 
-    // Reset form and close
-    handleCancelNew();
+    try {
+      // Save to Firestore first if we have a session ID
+      if (sessionId) {
+        try {
+          // This will save to the correct session and return the session ID
+          const savedSessionId = await saveSinglePayment(paymentToAdd, sessionId);
+          console.log('Payment saved to session:', savedSessionId);
+          
+          // Update local state with the new payment
+          updatePayments([...projectData.payments, paymentToAdd]);
+          
+          toast({ 
+            title: "Success", 
+            description: `Entry added to session ${savedSessionId}.` 
+          });
+          
+          // Trigger refresh for other components
+          window.dispatchEvent(new CustomEvent('refresh-sessions'));
+        } catch (firestoreError) {
+          console.error('Error saving to Firestore:', firestoreError);
+          // Still update local state even if Firestore save fails
+          updatePayments([...projectData.payments, paymentToAdd]);
+          
+          toast({ 
+            title: "Warning", 
+            description: "Entry added locally but failed to save to the database. Changes are local only.", 
+            variant: "destructive" 
+          });
+        }
+      } else {
+        // No session ID, just update local state
+        updatePayments([...projectData.payments, paymentToAdd]);
+        toast({ 
+          title: "Warning", 
+          description: "Entry added locally. No session selected - changes won't be saved to the database.",
+          variant: "default"
+        });
+      }
+
+      // Reset form and close
+      handleCancelNew();
+    } catch (error) {
+      console.error('Error adding new payment:', error);
+      toast({ 
+        title: "Error", 
+        description: `Failed to add entry: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        variant: "destructive" 
+      });
+    }
   };
 
   const handleCancelNew = () => {
@@ -844,21 +978,92 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
 
   const saveAllToFirestore = async () => {
     if (!sessionId) {
-      toast({ title: 'No Session Selected', description: 'Please select or create a session first.', variant: 'destructive' });
+      toast({ 
+        title: 'No Session Selected', 
+        description: 'Please select or create a session first.', 
+        variant: 'destructive' 
+      });
       return;
     }
     
     try {
-      await saveProjectData(projectData, sessionId);
-      await savePayments(projectData.payments, sessionId);
-      toast({ title: 'Data Saved', description: `All project data saved to session: ${sessionId}` });
+      // First, get all non-interest payments
+      const nonInterestPayments = projectData.payments.filter(p => p.type !== 'interest');
+      
+      // Process rental income into returns
+      const returnsFromIncomeStream: Payment[] = projectData.rentalIncome.map((r, i) => ({
+        id: r.id || `return_income_${i}_${r.month}_${r.amount}`,
+        month: r.month,
+        amount: r.amount,
+        description: r.description || (r.type === 'sale' ? `Property Sale` : `Rental Income`),
+        date: r.date || monthToDate(r.month),
+        type: 'return',
+      }));
+
+      // Combine non-interest payments and returns
+      const allBaseTransactions = [...nonInterestPayments, ...returnsFromIncomeStream];
+      
+      // Calculate new interest with current rate
+      const newLedgerWithInterest = calculateCompoundedMonthlyInterest(allBaseTransactions, interestRate);
+      
+      // Create a complete list of payments (non-interest + new interest)
+      const updatedPayments = [...nonInterestPayments, ...newLedgerWithInterest.filter(p => p.type === 'interest')];
+      
+      // Update local state
+      updatePayments(updatedPayments);
+      
+      // Update project data with the new payments and interest rate
+      const updatedProjectData = {
+        ...projectData,
+        payments: updatedPayments,
+        annualInterestRate: interestRate
+      };
+      
+      // Save to Firestore - first clear existing payments
+      const docRef = doc(db, 'test', sessionId);
+      await setDoc(docRef, {
+        entries: updatedPayments.map(p => ({
+          ...p,
+          // Ensure date is properly formatted for Firestore
+          date: p.date ? (typeof p.date === 'string' ? p.date : p.date.toISOString()) : null
+        })),
+        updatedAt: new Date(),
+        count: updatedPayments.length,
+        sessionId: sessionId
+      }, { merge: true });
+      
+      // Also update the project data
+      await saveProjectData(updatedProjectData, sessionId);
+      
+      // Update the last saved interest rate
+      setLastSavedInterestRate(interestRate);
+      
+      toast({ 
+        title: 'Data and Interest Updated', 
+        description: `Project data saved with updated interest calculations to session: ${sessionId}` 
+      });
       
       // Trigger refresh for other components
       window.dispatchEvent(new CustomEvent('refresh-sessions'));
+      
     } catch (error) {
       console.error('Error saving to Firestore:', error);
-      toast({ title: 'Error', description: 'Failed to save data to the database.', variant: 'destructive' });
+      toast({ 
+        title: 'Error', 
+        description: `Failed to save data to the database: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        variant: 'destructive' 
+      });
     }
+  };
+
+  const handleClearSession = () => {
+    updatePayments([]);
+    toast({
+      title: 'Session Cleared',
+      description: 'All entries have been removed from the current session.',
+      variant: 'default'
+    });
+    setIsClearSessionDialogOpen(false);
   };
 
   // Return the JSX for the component
@@ -866,27 +1071,68 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     <div className="space-y-4">
       {!showOnlyAnalysis && (
         <div className="space-y-3">
-          <div className="flex flex-wrap justify-end items-center gap-2 px-4 py-3">
-            <Button onClick={handleExportCSV} variant="outline" size="sm" className="h-8 gap-1">
-              <Copy className="h-3.5 w-3.5" /> Export CSV
+          <div className="flex overflow-x-auto pb-2 space-x-3 px-4 py-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
+            <Button 
+              onClick={handleExportCSV} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-blue-50"
+            >
+              <span className="text-lg">📤</span>
+              <span className="text-sm font-medium">Export CSV</span>
             </Button>
-            <Button onClick={handleCalculateInterest} variant="outline" size="sm" className="h-8 gap-1">
-              <Calculator className="h-3.5 w-3.5" /> Calculate Interest
+            
+            <Button 
+              onClick={handleCalculateInterest} 
+              variant="default" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
+            >
+              <span className="text-lg">🧮</span>
+              <span className="text-sm font-medium">Calculate Interest</span>
             </Button>
-            <Button onClick={() => setIsImportOpen(true)} variant="outline" size="sm" className="h-8 gap-1">
-              <Upload className="h-3.5 w-3.5" /> Import CSV
+            
+            <Button 
+              onClick={() => setIsImportOpen(true)} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-green-50"
+            >
+              <span className="text-lg">📥</span>
+              <span className="text-sm font-medium">Import CSV</span>
             </Button>
-            <Button onClick={() => setIsAIImportOpen(true)} variant="outline" size="sm" className="h-8 gap-1">
-              <Wand2 className="h-3.5 w-3.5" /> AI Import
+            
+            <Button 
+              onClick={() => setIsAIImportOpen(true)} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-yellow-50"
+            >
+              <span className="text-lg">✨</span>
+              <span className="text-sm font-medium">AI Import</span>
             </Button>
-            <Button onClick={saveAllToFirestore} variant="outline" size="sm" className="h-8 gap-1">
-              <Save className="h-3.5 w-3.5" /> Save All
+            
+            <Button 
+              onClick={saveAllToFirestore} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-indigo-50"
+            >
+              <span className="text-lg">💾</span>
+              <span className="text-sm font-medium">Save All</span>
             </Button>
-            <Button onClick={fetchDataFromFirestoreManual} variant="outline" size="sm" className="h-8 gap-1" disabled={isFetching}>
-              <Database className="h-3.5 w-3.5" /> {isFetching ? "Loading..." : "Load from DB"}
+            
+            <Button 
+              onClick={() => setIsAddingNew(true)} 
+              variant="default" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 bg-blue-600 hover:bg-blue-700"
+            >
+              <span className="text-lg text-white">➕</span>
+              <span className="text-sm font-medium text-white">Add Entry</span>
             </Button>
-            <Button onClick={() => setIsAddingNew(true)} size="sm" className="h-8 gap-1">
-              <Plus className="h-3.5 w-3.5" /> Add Entry
+            
+            <Button 
+              onClick={() => setIsClearSessionDialogOpen(true)} 
+              variant="outline" 
+              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              <span className="text-lg">🗑️</span>
+              <span className="text-sm font-medium">Clear Session</span>
             </Button>
           </div>
           <PaymentsTable
@@ -1001,6 +1247,27 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           onClose={() => setIsAIImportOpen(false)}
         />
       )}
+      
+      {/* Clear Session Confirmation Dialog */}
+      <AlertDialog open={isClearSessionDialogOpen} onOpenChange={setIsClearSessionDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear Session Data</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to clear all entries from the current session? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleClearSession}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Clear Session
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

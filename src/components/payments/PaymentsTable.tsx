@@ -91,15 +91,15 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
     let runningBalance = 0;
     return sortedPayments.map(payment => {
       // For running balance calculation:
-      // - Payments INCREASE the principal (add as positive)
-      // - Returns DECREASE the principal (subtract as positive)
-      // - Interest INCREASES the principal (always treat as positive)
-      if (payment.type === 'payment') {
+      if (payment.type === 'return') {
+        // Returns decrease the debt (positive amount)
+        runningBalance -= payment.amount;
+      } else if (payment.type === 'payment') {
+        // Payments increase the debt (negative amount)
         runningBalance += Math.abs(payment.amount);
-      } else if (payment.type === 'return') {
-        runningBalance -= Math.abs(payment.amount);
       } else if (payment.type === 'interest') {
-        runningBalance += Math.abs(payment.amount); // Always add interest as positive
+        // Interest increases the debt (positive amount)
+        runningBalance += payment.amount;
       }
       return { ...payment, balance: runningBalance };
     });
@@ -107,50 +107,59 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
 
   const paymentsWithBalance = calculateRunningBalances();
   const totalPayments = payments.reduce((sum, p) => sum + (p.type === 'return' ? p.amount : -p.amount), 0);
-  const netCashFlow = payments.reduce((sum, p) => sum + (p.type === 'return' ? p.amount : -p.amount), 0);
+  const netCashFlow = payments.reduce((sum, p) => {
+    if (p.type === 'return') {
+      return sum + p.amount;  // Returns are positive (reduce debt)
+    } else if (p.type === 'payment') {
+      return sum - p.amount;  // Payments are negative (increase debt)
+    } else {
+      return sum + p.amount;  // Interest is positive (increases debt)
+    }
+  }, 0);
 
   if (payments.length === 0 && !isAddingNew) return null;
 
   return (
-    <Card className="shadow-sm border-gray-200">
-      <CardContent className="p-0">
-        <Table>
-<TableHeader className="bg-gray-50">
-            <TableRow>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Date</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Amount (₹)</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Type</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Description</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500">Outstanding Principal</TableHead>
-              <TableHead className="py-2 text-xs font-medium text-gray-500 text-right w-24">Actions</TableHead>
+    <div className="border border-gray-200 rounded-sm bg-white">
+      <div className="overflow-x-auto">
+        <Table className="min-w-full">
+          <TableHeader className="bg-white border-b border-gray-200">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Date</TableHead>
+              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Amount (₹)</TableHead>
+              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Type</TableHead>
+              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Description</TableHead>
+              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Outstanding Principal</TableHead>
+              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center w-24">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {payments.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="py-4 text-center text-sm text-gray-500">
+              <TableRow className="hover:bg-white">
+                <TableCell colSpan={6} className="py-4 text-center text-sm text-gray-500 border-b border-gray-100">
                   No cash flow entries yet. Add your first entry to get started.
                 </TableCell>
               </TableRow>
             )}
             {paymentsWithBalance.map((payment, index) => (
-              <TableRow key={payment.id}>
-                <TableCell className="p-1">
-                  {editingPayment === payment.id ? (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button 
-                          variant="outline" 
-                          className="w-full justify-start text-left font-normal text-sm h-8"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <CalendarIcon className="mr-2 h-3 w-3" />
-                          {format(monthToDate(editValues.month), "MMM yyyy")}
-                        </Button>
+              <TableRow key={payment.id} className="hover:bg-white border-b border-gray-100 last:border-b-0">
+                <TableCell className="p-1 text-center">
+                  <div className="w-full flex justify-center">
+                    {editingPayment === payment.id ? (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            className="justify-center font-normal text-sm h-8 w-full max-w-[180px]"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <CalendarIcon className="mr-2 h-3 w-3" />
+                            {format(monthToDate(editValues.month), "MMM yyyy")}
+                          </Button>
                       </PopoverTrigger>
                       <PopoverContent 
                         className="w-auto p-0" 
-                        align="start"
+                        align="center"
                         onInteractOutside={(e) => e.preventDefault()}
                       >
                         <EnhancedCalendar
@@ -182,90 +191,99 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                       </PopoverContent>
                     </Popover>
                   ) : (
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">
-                        {payment.date 
-                          ? format(new Date(payment.date), "MMM d, yyyy") 
-                          : format(monthToDate(payment.month), "MMM d, yyyy")}
-                      </span>
-                    </div>
+                    <span className="text-sm">
+                      {payment.date 
+                        ? format(new Date(payment.date), "MMM d, yyyy") 
+                        : format(monthToDate(payment.month), "MMM d, yyyy")}
+                    </span>
                   )}
+                  </div>
                 </TableCell>
-                <TableCell className="p-1">
+                <TableCell className="p-1 text-center">
                   {editingPayment === payment.id ? (
                     <Input
                       type="number"
                       value={editValues.amount || ''}
                       onChange={(e) => setEditValues(prev => ({ ...prev, amount: Math.abs(Number(e.target.value)) }))}
                       onKeyDown={handleKeyPress}
-                      className="w-full h-8 text-sm"
+                      className="w-full h-8 text-sm text-center"
                       autoFocus
                     />
                   ) : (
                     <span className={`text-sm ${(payment.type as PaymentType) === 'return' ? 'text-green-600' : (payment.type as PaymentType) === 'interest' ? 'text-purple-600' : 'text-red-600'}`}>
-                      {/* Only returns should be shown as positive */}
+                      {/* Show + for returns, - for payments and interest */}
                       {(payment.type as PaymentType) === 'return' ? '+' : '-'}
-                      {/* For all types, show absolute value */}
-                      {(payment.type as PaymentType) === 'interest' 
-                        ? formatNumber(Math.abs(payment.amount), 2) /* Use 2 decimal places for interest */
-                        : formatNumber(Math.abs(payment.amount))}
+                      {/* Show absolute value of amount */}
+                      {Math.abs(payment.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="p-1">
+                <TableCell className="p-1 text-center">
                   {editingPayment === payment.id ? (
                     <select 
                       value={editValues.type || 'payment'}
                       onChange={(e) => setEditValues(prev => ({ ...prev, type: e.target.value }))}
-                      className="w-full h-8 text-sm rounded-md border border-input px-3"
+                      className="w-full h-8 text-sm rounded-md border border-input px-3 text-center"
                     >
                       <option value="payment">Payment</option>
                       <option value="return">Return</option>
                     </select>
                   ) : (
-                    <span className={`text-sm font-medium ${(payment.type as PaymentType) === 'return' ? 'text-green-600' : (payment.type as PaymentType) === 'interest' ? 'text-purple-600' : 'text-red-600'}`}>
-                      {(payment.type as PaymentType) === 'return' ? 'Return' : (payment.type as PaymentType) === 'interest' ? 'Interest' : 'Payment'}
-                    </span>
+                    <div className="flex justify-center">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                        payment.type === 'return' ? 'bg-green-100 text-green-800' : 
+                        payment.type === 'interest' ? 'bg-purple-100 text-purple-800' : 
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {(payment.type as PaymentType).toUpperCase()}
+                      </span>
+                    </div>
                   )}
                 </TableCell>
-                <TableCell className="p-1">
+                <TableCell className="p-1 text-center">
                   {editingPayment === payment.id ? (
                     <Input
                       value={editValues.description || ''}
                       onChange={(e) => setEditValues(prev => ({ ...prev, description: e.target.value }))}
                       onKeyDown={handleKeyPress}
-                      className="w-full h-8 text-sm"
+                      className="w-full h-8 text-sm text-center"
                     />
                   ) : (
                     <span className="text-sm">{payment.description}</span>
                   )}
                 </TableCell>
-                <TableCell className="py-2 text-right pr-4">
-                  {formatCurrency(payment.balance)}
+                <TableCell className="p-1 text-center">
+                  <span className={payment.balance > 0 ? 'text-red-600' : 'text-green-600'}>
+                    {payment.balance > 0 ? '-' : ''}{formatCurrency(Math.abs(payment.balance))}
+                  </span>
                 </TableCell>
-                <TableCell className="text-right py-2 pr-4 w-24">
-                  {editingPayment === payment.id || payment.type === 'interest' ? (
-                    <div className="flex items-center justify-end gap-1">
+                <TableCell className="p-1 text-center w-24">
+                  {editingPayment === payment.id ? (
+                    <div className="flex items-center justify-center gap-1">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={onSaveEdit}
                         className="p-1 h-7 w-7 rounded-full bg-green-50 text-green-600 hover:bg-green-100"
+                        title="Save changes"
                       >
                         <Check className="w-3.5 h-3.5" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={onCancelEdit}
-                        className="p-1 h-7 w-7 rounded-full bg-red-50 text-red-600 hover:bg-red-100"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </Button>
+                      {payment.type !== 'interest' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={onCancelEdit}
+                          className="p-1 h-7 w-7 rounded-full bg-red-50 text-red-600 hover:bg-red-100"
+                          title="Cancel"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                     </div>
                   ) : (
-                    <div className="flex items-center justify-end space-x-1">
-                      {(payment.type as PaymentType) !== 'interest' ? (
+                    <div className="flex items-center justify-center space-x-1">
+                      {payment.type !== 'interest' && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -275,8 +293,8 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </Button>
-                      ) : null}
-                      {(payment.type as PaymentType) !== 'interest' ? (
+                      )}
+                      {payment.type !== 'interest' && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -284,10 +302,9 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                           className="p-1 h-7 w-7 rounded-full bg-red-50 text-red-600 hover:bg-red-100"
                           title="Delete entry"
                         >
-                      
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
-                      ) : null}
+                      )}
                     </div>
                   )}
                 </TableCell>
@@ -377,8 +394,8 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                     placeholder="Description"
                   />
                 </TableCell>
-                <TableCell className="p-1 pt-2 text-right">
-                  <div className="flex items-center justify-end space-x-1">
+                <TableCell className="p-1 pt-2 text-center">
+                  <div className="w-full text-center justify-end space-x-1">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -403,7 +420,7 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
             )}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };

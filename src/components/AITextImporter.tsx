@@ -31,9 +31,12 @@ interface ProcessFileResult {
   fileName: string;
 }
 
-// Initialize the Google Generative AI with your API key
-// You can add your API key here for testing, but make sure to move it to .env before committing
-const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY || 'AIzaSyCMnwnm5V9wBbNqTj5Vs8PePx2ddsSqHpI';
+// Initialize the Google Generative AI with your API key from environment variables
+const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
+if (!API_KEY) {
+  console.error('VITE_GOOGLE_API_KEY is not set in environment variables');
+  throw new Error('Google API key is required. Please set VITE_GOOGLE_API_KEY in your .env file');
+}
 const genAI = new GoogleGenerativeAI(API_KEY);
 
 export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClose }) => {
@@ -196,9 +199,9 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
       
       console.log(`Extracted ${text.length} characters from ${fileType} document`);
       
-      // Only add header if text was successfully extracted
+      // Return just the extracted text without adding any headers
       if (text.trim().length > 0) {
-        return `${fileType} Document: ${file.name}\n\n${text}`;
+        return text.trim();
       }
       
       // If we got here but have no text, the extraction was unsuccessful
@@ -278,10 +281,148 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
     });
   };
 
+  // Function to check if text is already in CSV format
+  const isCSVFormatted = (text: string): boolean => {
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) return false;
+    
+    // Check if first line contains CSV headers
+    const headers = lines[0].trim().split(',').map(h => h.trim().toLowerCase());
+    const hasRequiredHeaders = 
+      headers.includes('date') && 
+      headers.includes('amount') && 
+      headers.includes('description');
+    
+    if (!hasRequiredHeaders) return false;
+    
+    // Check if remaining lines have the correct number of columns
+    return lines.slice(1).every(line => {
+      const values = line.split(',').map(v => v.trim());
+      return values.length >= 3; // At least 3 columns: date, amount, description
+    });
+  };
+
+  // Function to clean and format CSV text
+  const cleanAndFormatCSV = (text: string): string => {
+    const lines = text.trim().split('\n').filter(Boolean);
+    const headerLine = 'date,amount,description';
+    
+    // If already has correct headers, process the data lines
+    if (lines[0].trim().toLowerCase() === headerLine) {
+      // Parse and reconstruct each line to ensure proper CSV formatting
+      const cleanedLines = lines.slice(1).map(line => {
+        const [date, amount, ...descParts] = line.split(',').map(s => s.trim());
+        const description = descParts.join(',').trim();
+        // Reconstruct the line with proper CSV formatting
+        return `${date},${amount},${description}`;
+      });
+      return [headerLine, ...cleanedLines].join('\n');
+    }
+    
+    // If has different headers but correct format, replace headers and process data lines
+    if (lines[0].split(',').length >= 3) {
+      const cleanedLines = lines.slice(1).map(line => {
+        const [date, amount, ...descParts] = line.split(',').map(s => s.trim());
+        const description = descParts.join(',').trim();
+        // Reconstruct the line with proper CSV formatting
+        return `${date},${amount},${description}`;
+      });
+      return [headerLine, ...cleanedLines].join('\n');
+    }
+    
+    // If format is unrecognized, return the original text with headers
+    return [headerLine, ...lines].join('\n');
+  };
+
+  // Function to normalize date strings to YYYY-MM-DD format
+  const normalizeDate = (dateStr: string): string => {
+    if (!dateStr) return '';
+    
+    // Try to parse the date using JavaScript's Date object
+    try {
+      // Handle dates with ordinals (1st, 2nd, 3rd, 4th, etc.)
+      const cleanedDateStr = dateStr.replace(/(\d+)(?:st|nd|rd|th)/, '$1');
+      
+      // Try parsing with different formats
+      const dateFormats = [
+        // ISO 8601
+        'yyyy-MM-dd',
+        // Common date formats
+        'MM/dd/yyyy', 'dd/MM/yyyy', 'yyyy/MM/dd',
+        'MM-dd-yyyy', 'dd-MM-yyyy', 'yyyy-MM-dd',
+        // Text month formats
+        'MMMM d, yyyy', 'MMM d, yyyy', 'd MMMM yyyy', 'd MMM yyyy',
+        'd MMMM, yyyy', 'd MMM, yyyy', 'MMMM yyyy', 'MMM yyyy',
+        'yyyy MMMM', 'yyyy MMM', 'MM/yyyy', 'MM-yyyy', 'yyyy/MM', 'yyyy-MM'
+      ];
+      
+      // Try parsing with date-fns or fallback to native Date
+      let parsedDate: Date | null = null;
+      
+      // First try with date-fns if available
+      if (typeof window !== 'undefined' && window['dateFns']) {
+        const dateFns = window['dateFns'];
+        for (const format of dateFormats) {
+          try {
+            const d = dateFns.parse(cleanedDateStr, format, new Date());
+            if (dateFns.isValid(d)) {
+              parsedDate = d;
+              break;
+            }
+          } catch (e) { /* Ignore parse errors */ }
+        }
+      }
+      
+      // Fallback to native Date parsing if date-fns not available or didn't work
+      if (!parsedDate) {
+        // Try parsing directly
+        const d = new Date(cleanedDateStr);
+        if (!isNaN(d.getTime())) {
+          parsedDate = d;
+        }
+      }
+      
+      if (parsedDate) {
+        // Format as YYYY-MM-DD
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        const year = parsedDate.getFullYear();
+        const month = pad(parsedDate.getMonth() + 1);
+        const day = parsedDate.getDate();
+        
+        // If the original string only had month and year, use the 1st of the month
+        const hasDay = /\d{1,2}(st|nd|rd|th)?\s+[A-Za-z]|\d{1,2}[\/\-]\d{1,2}/i.test(dateStr);
+        const formattedDay = hasDay ? pad(day) : '01';
+        
+        return `${year}-${month}-${formattedDay}`;
+      }
+    } catch (e) {
+      console.error('Error normalizing date:', e);
+    }
+    
+    // Return original string if parsing failed
+    return dateStr;
+  };
+
   // Function to convert text to CSV format using Google's Generative AI (Gemini)
   const convertToCSV = async () => {
     if (!rawText.trim()) {
       toast({ title: "Error", description: "Please enter some text to convert.", variant: "destructive" });
+      return;
+    }
+
+    // Check if input is already in CSV format
+    if (isCSVFormatted(rawText)) {
+      const cleanedCSV = cleanAndFormatCSV(rawText);
+      // Normalize dates in the CSV
+      const lines = cleanedCSV.split('\n');
+      const header = lines[0];
+      const dataLines = lines.slice(1).map(line => {
+        const [date, ...rest] = line.split(',');
+        return [normalizeDate(date), ...rest].join(',');
+      });
+      const normalizedCSV = [header, ...dataLines].join('\n');
+      setCsvResult(normalizedCSV);
+      toast({ title: "Success", description: "CSV data detected and formatted." });
       return;
     }
 
@@ -293,11 +434,20 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
         
         Rules:
         1. The first line should be the header: date,amount,description
-        2. Dates should be in the format Month-Year (e.g., May-2025) or keep the original format if it's already a date
-        3. Amounts should be numbers only (no currency symbols or commas)
-        4. For payments/expenses, make the amount negative (add a minus sign)
-        5. For income/returns, keep the amount positive
-        6. The description should be a brief explanation of the payment or income
+        2. Extract the full date including day, month, and year when available
+        3. Format dates as YYYY-MM-DD (e.g., 2025-05-25 for May 25, 2025)
+        4. If only month and year are available, use YYYY-MM-01 (e.g., 2025-05-01 for May 2025)
+        5. Preserve the exact date when available in the original text (e.g., '25th May 2024' should be '2024-05-25')
+        6. Amounts should be numbers only (no currency symbols or commas)
+        7. For payments/expenses, make the amount negative (add a minus sign)
+        8. For income/returns, keep the amount positive
+        9. The description should be a brief explanation of the payment or income
+        
+        Examples:
+        - 'Payment on 25th May 2024 of Rs. 1,00,000' -> '2024-05-25,-100000,Payment'
+        - 'May 2025: Monthly installment 2,50,000' -> '2025-05-01,-250000,Monthly installment'
+        - '16th of June 2023 - Maintenance 5000' -> '2023-06-16,-5000,Maintenance'
+        - '25-01-2026: Final payment 7,50,000' -> '2026-01-25,-750000,Final payment'
         
         Here's the text to convert:
         ${rawText}
@@ -338,18 +488,43 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
         const lines = rawText.split('\n').filter(line => line.trim());
         const csvLines = ['date,amount,description'];
         
+        // Enhanced date patterns to match various formats
+        const datePatterns = [
+          // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+          /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/,
+          // YYYY/MM/DD or YYYY-MM-DD or YYYY.MM.DD
+          /(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/,
+          // DD Month YYYY or DD Mon YYYY
+          /(\d{1,2})(?:st|nd|rd|th)?\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s+(\d{4})/i,
+          // Month DD, YYYY or Mon DD, YYYY 
+          /(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?[,\s]+(\d{4})/i,
+          // Month YYYY or Mon YYYY
+          /(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s+(\d{4})/i,
+          // YYYY Month or YYYY Mon
+          /(\d{4})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*/i
+        ];
+        
         for (const line of lines) {
-          // Try to extract date patterns (Month-Year or MM/DD/YYYY)
-          const datePattern = /(?:\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-\s]20\d{2}\b)|(?:\d{1,2}\/\d{1,2}\/\d{2,4})/i;
-          const dateMatch = line.match(datePattern);
+          let dateMatch = null;
+          let dateStr = '';
+          
+          // Try each date pattern until we find a match
+          for (const pattern of datePatterns) {
+            const match = line.match(pattern);
+            if (match) {
+              dateMatch = match;
+              dateStr = match[0].trim();
+              break;
+            }
+          }
+          
+          if (!dateMatch) continue;
           
           // Try to extract amount patterns (numbers with optional commas, decimal points, and currency symbols)
           const amountPattern = /(?:[-+]?\s*(?:Rs\.?|INR|\$)?\s*\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)|(?:[-+]?\s*\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s*(?:Rs\.?|INR|\$)?)/;
           const amountMatch = line.match(amountPattern);
           
-          // If we found both a date and an amount, extract the description as everything else
-          if (dateMatch && amountMatch) {
-            const date = dateMatch[0].trim();
+          if (amountMatch) {
             let amount = amountMatch[0].trim();
             
             // Clean up the amount (remove currency symbols, commas)
@@ -358,19 +533,18 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
             // Make payment amounts negative if they don't already have a sign
             if (!amount.startsWith('+') && !amount.startsWith('-')) {
               // Check if this looks like a payment (keywords)
-              if (line.toLowerCase().includes('payment') || 
-                  line.toLowerCase().includes('booking') || 
-                  line.toLowerCase().includes('installment') ||
-                  line.toLowerCase().includes('completion')) {
+              const paymentKeywords = ['payment', 'booking', 'installment', 'completion', 'fee', 'charge', 'debit'];
+              if (paymentKeywords.some(keyword => line.toLowerCase().includes(keyword))) {
                 amount = '-' + amount;
               }
             }
             
             // Extract description (everything that's not the date or amount)
             let description = line
-              .replace(dateMatch[0], '')
+              .replace(dateStr, '')
               .replace(amountMatch[0], '')
               .replace(/[,\s]+/g, ' ')
+              .replace(/^[^\w\s]+|[^\w\s]+$/g, '') // Remove leading/trailing non-word chars
               .trim();
             
             // If description is empty, use a default
@@ -378,7 +552,10 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
               description = 'Payment';
             }
             
-            csvLines.push(`${date},${amount},${description}`);
+            // Normalize the date
+            const normalizedDate = normalizeDate(dateStr);
+            
+            csvLines.push(`${normalizedDate},${amount},${description}`);
           }
         }
         

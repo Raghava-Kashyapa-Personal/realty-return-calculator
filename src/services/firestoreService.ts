@@ -1,10 +1,25 @@
 import { db } from '../firebaseConfig';
-import { collection, doc, setDoc, getDoc, Timestamp, updateDoc, arrayUnion, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, Timestamp, updateDoc, arrayUnion, getDocs, query, orderBy, limit, where, deleteDoc } from 'firebase/firestore';
 import { Payment, ProjectData } from '@/types/project';
 
 // Collection names
 const CASHFLOW_COLLECTION = 'cashflows';
 const PAYMENTS_COLLECTION = 'test'; // Using 'test' as specified by the user
+
+/**
+ * Deletes a session (document) by its ID from Firestore
+ * @param sessionId The document ID of the session to delete
+ */
+export const deleteSession = async (sessionId: string): Promise<void> => {
+  try {
+    const docRef = doc(db, PAYMENTS_COLLECTION, sessionId);
+    await deleteDoc(docRef);
+    console.log(`Session ${sessionId} deleted successfully.`);
+  } catch (error) {
+    console.error(`Error deleting session ${sessionId}:`, error);
+    throw error;
+  }
+};
 
 /**
  * Saves project data to Firestore
@@ -64,11 +79,22 @@ export const savePayments = async (payments: Payment[], sessionId?: string): Pro
       const existingData = docSnap.data();
       const existingPayments = existingData.entries || [];
       
-      // Merge existing and new payments
+      // Create a Set of existing payment IDs for quick lookup
+      const existingPaymentIds = new Set(existingPayments.map((p: Payment) => p.id));
+      
+      // Filter out any new payments that already exist (by ID)
+      const uniqueNewPayments = sanitizedPayments.filter(payment => !existingPaymentIds.has(payment.id));
+      
+      if (uniqueNewPayments.length === 0) {
+        console.log('No new payments to save - all entries already exist');
+        return docId;
+      }
+      
+      // Only update if we have new payments to add
       await updateDoc(docRef, {
-        entries: [...existingPayments, ...sanitizedPayments],
+        entries: [...existingPayments, ...uniqueNewPayments],
         updatedAt: Timestamp.now(),
-        count: existingPayments.length + sanitizedPayments.length,
+        count: existingPayments.length + uniqueNewPayments.length,
         sessionId: sessionId || existingData.sessionId
       });
     } else {
@@ -95,42 +121,59 @@ export const savePayments = async (payments: Payment[], sessionId?: string): Pro
  * @param projectId The project ID (optional)
  * @returns The document ID
  */
-export const saveSinglePayment = async (payment: Payment, projectId?: string): Promise<string> => {
+export const saveSinglePayment = async (payment: Payment, sessionId?: string): Promise<string> => {
   try {
-    // Get today's date as document ID (YYYY-MM-DD)
-    const today = new Date().toISOString().split('T')[0];
-    const docId = today;
+    if (!sessionId) {
+      throw new Error('Session ID is required to save a payment');
+    }
     
     // Sanitize the payment to remove any undefined values
     const sanitizedPayment = sanitizePaymentData(payment);
     
     // Check if document already exists
-    const docRef = doc(db, PAYMENTS_COLLECTION, docId);
+    const docRef = doc(db, PAYMENTS_COLLECTION, sessionId);
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
-      // Document exists, add this payment to it
+      // Document exists, add this payment to it if it doesn't already exist
       const existingData = docSnap.data();
-      const existingEntries = existingData.entries || [];
+      const existingEntries: Payment[] = existingData.entries || [];
+      
+      // Check if this payment already exists (by ID or content)
+      const paymentExists = existingEntries.some(
+        p => p.id === payment.id || 
+             (p.month === payment.month && 
+              p.amount === payment.amount && 
+              p.description === payment.description)
+      );
+      
+      if (paymentExists) {
+        console.log('Payment already exists in session, skipping duplicate');
+        return sessionId;
+      }
       
       await updateDoc(docRef, {
         entries: [...existingEntries, sanitizedPayment],
         updatedAt: Timestamp.now(),
-        count: (existingEntries.length || 0) + 1,
-        projectId: projectId || existingData.projectId
+        count: existingEntries.length + 1,
+        sessionId: sessionId
       });
+      
+      console.log(`Added payment to existing session ${sessionId}`);
     } else {
-      // Document doesn't exist, create it
+      // Document doesn't exist, create it with this payment
       await setDoc(docRef, {
         entries: [sanitizedPayment],
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         count: 1,
-        projectId: projectId
+        sessionId: sessionId
       });
+      
+      console.log(`Created new session ${sessionId} with first payment`);
     }
     
-    return docId;
+    return sessionId;
   } catch (error) {
     console.error('Error saving single payment:', error);
     throw error;
@@ -372,22 +415,47 @@ export const fetchSessions = async (limitCount: number = 20) => {
 };
 
 /**
- * Creates a new session in Firestore with current timestamp
- * @returns Object with new session ID
+ * Creates a new session in Firestore with current timestamp and name
+ * @param sessionName Optional name for the session
+ * @returns Object with new session ID and name
  */
-export const createNewSession = async () => {
+/**
+ * Updates the name of an existing session
+ * @param sessionId The ID of the session to update
+ * @param newName The new name for the session
+ */
+export const updateSessionName = async (sessionId: string, newName: string) => {
+  try {
+    await updateDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
+      name: newName,
+      updatedAt: Timestamp.now()
+    });
+  } catch (error) {
+    console.error('Error updating session name:', error);
+    throw error;
+  }
+};
+
+/**
+ * Creates a new session in Firestore with current timestamp and name
+ * @param sessionName Optional name for the session
+ * @returns Object with new session ID and name
+ */
+export const createNewSession = async (sessionName?: string) => {
   try {
     // Use current date as document ID (YYYY-MM-DD)
     const today = new Date().toISOString().split('T')[0];
     const sessionId = `${today}-${Math.random().toString(36).substring(2, 8)}`;
+    const name = sessionName || `Session ${new Date().toLocaleString()}`;
     
     await setDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
       createdAt: Timestamp.now(),
-      entries: [],
-      updatedAt: Timestamp.now()
+      updatedAt: Timestamp.now(),
+      name,
+      entries: []
     });
     
-    return { sessionId };
+    return { sessionId, name };
   } catch (error) {
     console.error('Error creating new session:', error);
     throw error;

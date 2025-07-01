@@ -9,7 +9,9 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check-secrets": "node scripts/check-secrets.js",
+    "precommit": "npm run check-secrets && npm run lint"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -71,6 +73,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.3.0",
+    "@commitlint/config-conventional": "^19.2.0",
     "@eslint/js": "^9.9.0",
     "@tailwindcss/typography": "^0.5.15",
     "@testing-library/react": "^16.3.0",
@@ -84,6 +88,7 @@
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.9",
     "globals": "^15.9.0",
+    "husky": "^9.1.2",
     "jsdom": "^26.1.0",
     "lovable-tagger": "^1.1.7",
     "postcss": "^8.4.47",
@@ -92,5 +97,10 @@
     "typescript-eslint": "^8.0.1",
     "vite": "^5.4.1",
     "vitest": "^3.1.4"
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "npm run check-secrets && npm run lint"
+    }
   }
 }
