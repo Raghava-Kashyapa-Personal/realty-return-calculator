@@ -3,7 +3,10 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Upload, X, Wand2 } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Upload, X, Wand2, FileText, FileUp, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface AITextImporterProps {
@@ -20,7 +23,85 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
   const [rawText, setRawText] = useState('');
   const [csvResult, setCsvResult] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isReadingFile, setIsReadingFile] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [activeTab, setActiveTab] = useState('paste');
   const { toast } = useToast();
+
+  // Read and process the selected file
+  const readSelectedFile = async () => {
+    if (!selectedFile) {
+      toast({ title: "Error", description: "Please select a file to import.", variant: "destructive" });
+      return;
+    }
+    
+    setIsReadingFile(true);
+    try {
+      let text = "";
+      const fileType = selectedFile.type;
+      const fileName = selectedFile.name.toLowerCase();
+      
+      if (fileType === "text/plain" || fileName.endsWith(".txt")) {
+        // Handle text files
+        text = await readTextFile(selectedFile);
+      } else if (fileType === "application/pdf" || fileName.endsWith(".pdf")) {
+        // Handle PDF files - here we would need a PDF extraction library
+        // For now, we'll show an error message about needing to add PDF support
+        toast({ 
+          title: "PDF Support Coming Soon", 
+          description: "PDF parsing requires additional libraries. For now, please copy-paste the text content.", 
+          variant: "destructive" 
+        });
+        setIsReadingFile(false);
+        return;
+      } else if (fileType.includes("word") || fileName.endsWith(".doc") || fileName.endsWith(".docx") || fileName.endsWith(".rtf")) {
+        // Handle Word files - here we would need a Word extraction library
+        // For now, we'll show an error message about needing to add Word support
+        toast({ 
+          title: "Word Document Support Coming Soon", 
+          description: "Word document parsing requires additional libraries. For now, please copy-paste the text content.", 
+          variant: "destructive" 
+        });
+        setIsReadingFile(false);
+        return;
+      } else {
+        toast({ title: "Error", description: "Unsupported file type. Please use a .txt, .pdf, .doc, or .docx file.", variant: "destructive" });
+        setIsReadingFile(false);
+        return;
+      }
+      
+      if (text) {
+        setRawText(text);
+        setActiveTab("paste"); // Switch to paste tab to show the extracted content
+        toast({ title: "Success", description: `File content extracted from ${selectedFile.name}` });
+      } else {
+        toast({ title: "Error", description: "Failed to extract text from the file or the file was empty.", variant: "destructive" });
+      }
+    } catch (error) {
+      console.error('Error reading file:', error);
+      toast({ title: "Error", description: "Failed to read the selected file.", variant: "destructive" });
+    } finally {
+      setIsReadingFile(false);
+    }
+  };
+  
+  // Read text file contents
+  const readTextFile = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          resolve(e.target.result as string);
+        } else {
+          reject(new Error('Failed to read file'));
+        }
+      };
+      reader.onerror = (e) => {
+        reject(new Error('File reading error'));
+      };
+      reader.readAsText(file);
+    });
+  };
 
   // Function to convert text to CSV format using Google's Generative AI (Gemini)
   const convertToCSV = async () => {
@@ -153,18 +234,70 @@ export const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClos
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">
-                Paste any text containing payment information, and Google's Gemini AI will convert it to CSV format.
-              </p>
-              <Textarea
-                value={rawText}
-                onChange={(e) => setRawText(e.target.value)}
-                placeholder="Paste your text here... Example:&#10;May 2025 - Booking payment of Rs. 1,46,000&#10;June 2025 - Foundation work payment Rs. 2,92,000"
-                rows={6}
-                className="font-mono text-xs"
-              />
-            </div>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="paste" className="flex items-center gap-1">
+                  <FileText className="w-4 h-4" /> Paste Text
+                </TabsTrigger>
+                <TabsTrigger value="upload" className="flex items-center gap-1">
+                  <FileUp className="w-4 h-4" /> Upload File
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="paste" className="mt-4">
+                <p className="text-sm text-muted-foreground mb-2">
+                  Paste any text containing payment information, and Google's Gemini AI will convert it to CSV format.
+                </p>
+                <Textarea
+                  value={rawText}
+                  onChange={(e) => setRawText(e.target.value)}
+                  placeholder="Paste your text here... Example:&#10;May 2025 - Booking payment of Rs. 1,46,000&#10;June 2025 - Foundation work payment Rs. 2,92,000"
+                  rows={6}
+                  className="font-mono text-xs"
+                />
+              </TabsContent>
+              
+              <TabsContent value="upload" className="mt-4">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="file-upload">Upload a text, PDF, or Word file</Label>
+                    <Input 
+                      id="file-upload"
+                      type="file"
+                      accept=".txt,.pdf,.doc,.docx,.rtf"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setSelectedFile(file);
+                        }
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Supported formats: .txt, .pdf, .doc, .docx, .rtf
+                    </p>
+                  </div>
+                  
+                  {selectedFile && (
+                    <Button
+                      onClick={readSelectedFile}
+                      disabled={isReadingFile}
+                      variant="secondary"
+                      className="w-full gap-2"
+                    >
+                      {isReadingFile ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" /> Reading File...
+                        </>
+                      ) : (
+                        <>
+                          <FileUp className="w-4 h-4" /> Read File Content
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+              </TabsContent>
+            </Tabs>
             
             <div className="flex justify-center">
               <Button 
