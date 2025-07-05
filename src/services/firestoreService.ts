@@ -4,19 +4,19 @@ import { Payment, ProjectData } from '@/types/project';
 
 // Collection names
 const CASHFLOW_COLLECTION = 'cashflows';
-const PAYMENTS_COLLECTION = 'test'; // Using 'test' as specified by the user
+const PAYMENTS_COLLECTION = 'projects'; // Renamed from 'test' to 'projects'
 
 /**
- * Deletes a session (document) by its ID from Firestore
- * @param sessionId The document ID of the session to delete
+ * Deletes a project (document) by its ID from Firestore
+ * @param projectId The document ID of the project to delete
  */
-export const deleteSession = async (sessionId: string): Promise<void> => {
+export const deleteProject = async (projectId: string): Promise<void> => {
   try {
-    const docRef = doc(db, PAYMENTS_COLLECTION, sessionId);
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
     await deleteDoc(docRef);
-    console.log(`Session ${sessionId} deleted successfully.`);
+    console.log(`Project ${projectId} deleted successfully.`);
   } catch (error) {
-    console.error(`Error deleting session ${sessionId}:`, error);
+    console.error(`Error deleting project ${projectId}:`, error);
     throw error;
   }
 };
@@ -24,17 +24,17 @@ export const deleteSession = async (sessionId: string): Promise<void> => {
 /**
  * Saves project data to Firestore
  * @param projectData The project data to save
- * @param sessionId Optional session ID to use as document ID
+ * @param projectId Optional project ID to use as document ID
  * @returns The document ID
  */
-export const saveProjectData = async (projectData: ProjectData, sessionId?: string): Promise<string> => {
+export const saveProjectData = async (projectData: ProjectData, projectId?: string): Promise<string> => {
   try {
-    // Use provided sessionId, or derive from project name, or generate a timestamp-based ID
-    const docId = sessionId || (projectData.projectName 
+    // Use provided projectId, or derive from project name, or generate a timestamp-based ID
+    const docId = projectId || (projectData.projectName 
       ? projectData.projectName.replace(/\s+/g, '-').toLowerCase() 
       : `project-${Date.now()}`);
     
-    console.log(`Saving project data to session ID: ${docId}`);
+    console.log(`Saving project data to project ID: ${docId}`);
     
     // Remove any undefined values to prevent Firestore errors
     const sanitizedData = sanitizeData(projectData);
@@ -58,14 +58,14 @@ export const saveProjectData = async (projectData: ProjectData, sessionId?: stri
 /**
  * Saves payments data to Firestore
  * @param payments The payments to save
- * @param sessionId The session ID to use as document ID (optional)
+ * @param projectId The project ID to use as document ID (optional)
  * @returns The document ID
  */
-export const savePayments = async (payments: Payment[], sessionId?: string): Promise<string> => {
+export const savePayments = async (payments: Payment[], projectId?: string): Promise<string> => {
   try {
-    // Use provided sessionId or today's date as document ID
-    const docId = sessionId || new Date().toISOString().split('T')[0];
-    console.log(`Saving payments to session ID: ${docId}`);
+    // Use provided projectId or today's date as document ID
+    const docId = projectId || new Date().toISOString().split('T')[0];
+    console.log(`Saving payments to project ID: ${docId}`);
     
     // Sanitize the payments to remove any undefined values
     const sanitizedPayments = payments.map(payment => sanitizePaymentData(payment));
@@ -95,7 +95,7 @@ export const savePayments = async (payments: Payment[], sessionId?: string): Pro
         entries: [...existingPayments, ...uniqueNewPayments],
         updatedAt: Timestamp.now(),
         count: existingPayments.length + uniqueNewPayments.length,
-        sessionId: sessionId || existingData.sessionId
+        projectId: projectId || existingData.projectId
       });
     } else {
       // Document doesn't exist, create it
@@ -104,7 +104,7 @@ export const savePayments = async (payments: Payment[], sessionId?: string): Pro
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         count: sanitizedPayments.length,
-        sessionId: sessionId || docId
+        projectId: projectId || docId
       });
     }
     
@@ -121,17 +121,17 @@ export const savePayments = async (payments: Payment[], sessionId?: string): Pro
  * @param projectId The project ID (optional)
  * @returns The document ID
  */
-export const saveSinglePayment = async (payment: Payment, sessionId?: string): Promise<string> => {
+export const saveSinglePayment = async (payment: Payment, projectId?: string): Promise<string> => {
   try {
-    if (!sessionId) {
-      throw new Error('Session ID is required to save a payment');
+    if (!projectId) {
+      throw new Error('Project ID is required to save a payment');
     }
     
     // Sanitize the payment to remove any undefined values
     const sanitizedPayment = sanitizePaymentData(payment);
     
     // Check if document already exists
-    const docRef = doc(db, PAYMENTS_COLLECTION, sessionId);
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
@@ -148,18 +148,18 @@ export const saveSinglePayment = async (payment: Payment, sessionId?: string): P
       );
       
       if (paymentExists) {
-        console.log('Payment already exists in session, skipping duplicate');
-        return sessionId;
+        console.log('Payment already exists in project, skipping duplicate');
+        return projectId;
       }
       
       await updateDoc(docRef, {
         entries: [...existingEntries, sanitizedPayment],
         updatedAt: Timestamp.now(),
         count: existingEntries.length + 1,
-        sessionId: sessionId
+        projectId: projectId
       });
       
-      console.log(`Added payment to existing session ${sessionId}`);
+      console.log(`Added payment to existing project ${projectId}`);
     } else {
       // Document doesn't exist, create it with this payment
       await setDoc(docRef, {
@@ -167,13 +167,13 @@ export const saveSinglePayment = async (payment: Payment, sessionId?: string): P
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         count: 1,
-        sessionId: sessionId
+        projectId: projectId
       });
       
-      console.log(`Created new session ${sessionId} with first payment`);
+      console.log(`Created new project ${projectId} with first payment`);
     }
     
-    return sessionId;
+    return projectId;
   } catch (error) {
     console.error('Error saving single payment:', error);
     throw error;
@@ -343,19 +343,19 @@ export const fetchAllEntries = async (limitCount: number = 20): Promise<{ entrie
 };
 
 /**
- * Fetches a specific session by ID from Firestore
- * @param sessionId The document ID of the session to fetch
- * @returns Session data with entries
+ * Fetches a specific project by ID from Firestore
+ * @param projectId The document ID of the project to fetch
+ * @returns Project data with entries
  */
-export const fetchSession = async (sessionId: string): Promise<{ entries: Payment[], projectId?: string }> => {
+export const fetchProject = async (projectId: string): Promise<{ entries: Payment[], projectId?: string }> => {
   try {
-    console.log('Fetching session by ID:', sessionId);
-    const docRef = doc(db, PAYMENTS_COLLECTION, sessionId);
+    console.log('Fetching project by ID:', projectId);
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
       const data = docSnap.data();
-      console.log('Found session with data:', data);
+      console.log('Found project with data:', data);
       
       // Convert Firebase timestamps back to Date objects in entries
       const entries = (data.entries || []).map((entry: any) => {
@@ -380,26 +380,26 @@ export const fetchSession = async (sessionId: string): Promise<{ entries: Paymen
     
     return { entries: [] };
   } catch (error) {
-    console.error(`Error fetching session ${sessionId}:`, error);
+    console.error(`Error fetching project ${projectId}:`, error);
     return { entries: [] };
   }
 };
 
 /**
- * Get all sessions (documents) from the payments collection
- * @param limit Maximum number of sessions to retrieve
- * @returns Array of session objects with id, date, and entry count
+ * Get all projects (documents) from the payments collection
+ * @param limit Maximum number of projects to retrieve
+ * @returns Array of project objects with id, date, and entry count
  */
-export const fetchSessions = async (limitCount: number = 20) => {
+export const fetchProjects = async (limitCount: number = 20) => {
   try {
-    const sessionsRef = collection(db, PAYMENTS_COLLECTION);
-    const q = query(sessionsRef, orderBy('createdAt', 'desc'), limit(limitCount));
+    const projectsRef = collection(db, PAYMENTS_COLLECTION);
+    const q = query(projectsRef, orderBy('createdAt', 'desc'), limit(limitCount));
     const querySnapshot = await getDocs(q);
     
-    const sessions = [];
+    const projects = [];
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      sessions.push({
+      projects.push({
         id: doc.id,
         date: data.createdAt?.toDate() || new Date(doc.id),
         entryCount: (data.entries || []).length,
@@ -407,57 +407,52 @@ export const fetchSessions = async (limitCount: number = 20) => {
       });
     });
     
-    return sessions;
+    return projects;
   } catch (error) {
-    console.error('Error fetching sessions:', error);
+    console.error('Error fetching projects:', error);
     return [];
   }
 };
 
 /**
- * Creates a new session in Firestore with current timestamp and name
- * @param sessionName Optional name for the session
- * @returns Object with new session ID and name
+ * Updates the name of an existing project
+ * @param projectId The ID of the project to update
+ * @param newName The new name for the project
  */
-/**
- * Updates the name of an existing session
- * @param sessionId The ID of the session to update
- * @param newName The new name for the session
- */
-export const updateSessionName = async (sessionId: string, newName: string) => {
+export const updateProjectName = async (projectId: string, newName: string) => {
   try {
-    await updateDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
+    await updateDoc(doc(db, PAYMENTS_COLLECTION, projectId), {
       name: newName,
       updatedAt: Timestamp.now()
     });
   } catch (error) {
-    console.error('Error updating session name:', error);
+    console.error('Error updating project name:', error);
     throw error;
   }
 };
 
 /**
- * Creates a new session in Firestore with current timestamp and name
- * @param sessionName Optional name for the session
- * @returns Object with new session ID and name
+ * Creates a new project in Firestore with current timestamp and name
+ * @param projectName Optional name for the project
+ * @returns Object with new project ID and name
  */
-export const createNewSession = async (sessionName?: string) => {
+export const createNewProject = async (projectName?: string) => {
   try {
     // Use current date as document ID (YYYY-MM-DD)
     const today = new Date().toISOString().split('T')[0];
-    const sessionId = `${today}-${Math.random().toString(36).substring(2, 8)}`;
-    const name = sessionName || `Session ${new Date().toLocaleString()}`;
+    const projectId = `${today}-${Math.random().toString(36).substring(2, 8)}`;
+    const name = projectName || `Project ${new Date().toLocaleString()}`;
     
-    await setDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
+    await setDoc(doc(db, PAYMENTS_COLLECTION, projectId), {
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
       name,
       entries: []
     });
     
-    return { sessionId, name };
+    return { projectId, name };
   } catch (error) {
-    console.error('Error creating new session:', error);
+    console.error('Error creating new project:', error);
     throw error;
   }
 };
@@ -533,7 +528,7 @@ export const fetchProjectEntries = async (projectId: string): Promise<Payment[]>
  * @param projectId The project ID to fetch
  * @returns The project data
  */
-export const fetchProject = async (projectId: string): Promise<ProjectData | null> => {
+export const fetchProjectData = async (projectId: string): Promise<ProjectData | null> => {
   try {
     const docRef = doc(db, CASHFLOW_COLLECTION, projectId);
     const docSnap = await getDoc(docRef);
@@ -576,3 +571,6 @@ const sanitizeData = (obj: any): any => {
   
   return sanitized;
 };
+
+export const deleteProjectData = deleteProject;
+export const updateProjectData = updateProjectName;

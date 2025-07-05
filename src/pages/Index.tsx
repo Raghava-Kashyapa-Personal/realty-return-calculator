@@ -1,30 +1,29 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import PaymentsCashFlow from '@/components/PaymentsCashFlow';
 import { FinancialMetrics } from '@/components/FinancialMetrics';
-import { SessionSidebar } from '@/components/SessionSidebar';
+import { ProjectSidebar } from '@/components/ProjectSidebar';
 import { ProjectData, Payment } from '@/types/project';
 import { TrendingUp, BarChart3 } from 'lucide-react';
-import { fetchSession, createNewSession, deleteSession } from '@/services/firestoreService';
-import { SessionNameDialog } from '@/components/SessionNameDialog';
+import { fetchProject, createNewProject, deleteProject } from '@/services/firestoreService';
+import { ProjectNameDialog } from '@/components/ProjectNameDialog';
 import { useNavigate } from 'react-router-dom';
-import { useSession } from '@/contexts/SessionContext';
+import { useProject } from '@/contexts/ProjectContext';
 
 const Index = () => {
   // ...existing state
 
-  // Handle session deletion
-  const handleDeleteSession = async (sessionId: string) => {
+  // Handle project deletion
+  const handleDeleteProject = async (projectId: string) => {
     setIsLoading(true);
     try {
-      await deleteSession(sessionId);
-      toast({ title: 'Session Deleted', description: `Session ${sessionId} deleted.` });
-      // If deleted session is current, clear selection
-      if (currentSessionId === sessionId) {
-        setCurrentSessionId('');
+      await deleteProject(projectId);
+      toast({ title: 'Project Deleted', description: `Project ${projectId} deleted.` });
+      // If deleted project is current, clear selection
+      if (currentProjectId === projectId) {
+        setCurrentProjectId('');
         setProjectData({
           projectName: 'New Project',
           annualInterestRate: 12,
@@ -39,10 +38,10 @@ const Index = () => {
       }
       // Refresh sidebar
       setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('refresh-sessions', { detail: 'refresh-sessions' }));
+        window.dispatchEvent(new CustomEvent('refresh-projects', { detail: 'refresh-projects' }));
       }, 300);
     } catch (error) {
-      toast({ title: 'Error', description: 'Failed to delete session', variant: 'destructive' });
+      toast({ title: 'Error', description: 'Failed to delete project', variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -60,38 +59,38 @@ const Index = () => {
     rentalIncome: [],
   });
 
-  // Session management states
-  const { currentSessionId, setCurrentSessionId } = useSession();
+  // Project management states
+  const { currentProjectId, setCurrentProjectId } = useProject();
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(true);
   const { toast } = useToast();
 
-  // Load session data when currentSessionId changes
+  // Load project data when currentProjectId changes
   useEffect(() => {
-    const loadSession = async () => {
-      if (!currentSessionId) return;
+    const loadProject = async () => {
+      if (!currentProjectId) return;
 
       setIsLoading(true);
       try {
-        const { entries, projectId } = await fetchSession(currentSessionId);
+        const { entries, projectId } = await fetchProject(currentProjectId);
         if (entries && entries.length > 0) {
           updatePayments(entries);
 
           toast({
-            title: 'Session Loaded',
-            description: `Loaded ${entries.length} entries from session`,
+            title: 'Project Loaded',
+            description: `Loaded ${entries.length} entries from project`,
           });
         } else {
           toast({
-            title: 'Empty Session',
-            description: 'This session has no entries',
+            title: 'Empty Project',
+            description: 'This project has no entries',
           });
         }
       } catch (error) {
-        console.error('Error loading session:', error);
+        console.error('Error loading project:', error);
         toast({
           title: 'Error',
-          description: 'Failed to load session data',
+          description: 'Failed to load project data',
           variant: 'destructive',
         });
       } finally {
@@ -99,22 +98,22 @@ const Index = () => {
       }
     };
 
-    loadSession();
-  }, [currentSessionId, toast]);
+    loadProject();
+  }, [currentProjectId, toast]);
 
-  // Handle session selection from sidebar
-  const handleSelectSession = (sessionId: string) => {
-    console.log(`Selecting session: ${sessionId}`);
+  // Handle project selection from sidebar
+  const handleSelectProject = (projectId: string) => {
+    console.log(`Selecting project: ${projectId}`);
     
-    // IMPORTANT: First set the current session ID to update the UI
-    setCurrentSessionId(sessionId);
+    // IMPORTANT: First set the current project ID to update the UI
+    setCurrentProjectId(projectId);
     
     // Then try to load cached data immediately to prevent flashing
-    const cachedData = localStorage.getItem(`session-data-${sessionId}`);
+    const cachedData = localStorage.getItem(`project-data-${projectId}`);
     if (cachedData) {
       try {
         const parsedData = JSON.parse(cachedData);
-        console.log(`Using cached data for session ${sessionId}: ${parsedData.length} entries`);
+        console.log(`Using cached data for project ${projectId}: ${parsedData.length} entries`);
         
         // Update project data with cached payments
         setProjectData(prev => ({
@@ -122,11 +121,11 @@ const Index = () => {
           payments: parsedData
         }));
       } catch (e) {
-        console.error('Error parsing cached session data:', e);
+        console.error('Error parsing cached project data:', e);
       }
     } else {
       // If no cached data, ensure we start with an empty state
-      // This prevents stale data from previous sessions
+      // This prevents stale data from previous projects
       setProjectData(prev => ({
         ...prev,
         payments: []
@@ -135,35 +134,35 @@ const Index = () => {
     
     // Then force a refresh to fetch latest data
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('refresh-sessions', { detail: sessionId }));
+      window.dispatchEvent(new CustomEvent('refresh-projects', { detail: projectId }));
     }, 100);
   };
 
-  // State for session name dialog
-  const [isSessionDialogOpen, setIsSessionDialogOpen] = useState(false);
-  const [pendingSessionName, setPendingSessionName] = useState('');
+  // State for project name dialog
+  const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false);
+  const [pendingProjectName, setPendingProjectName] = useState('');
 
-  // Handle new session button click
-  const handleNewSessionClick = () => {
-    setPendingSessionName('');
-    setIsSessionDialogOpen(true);
+  // Handle new project button click
+  const handleNewProjectClick = () => {
+    setPendingProjectName('');
+    setIsProjectDialogOpen(true);
   };
 
-  // Create a new session with the given name
-  const handleCreateSession = async (sessionName: string) => {
+  // Create a new project with the given name
+  const handleCreateProject = async (projectName: string) => {
     setIsLoading(true);
-    setIsSessionDialogOpen(false);
+    setIsProjectDialogOpen(false);
     
     try {
-      const { sessionId, name } = await createNewSession(sessionName);
+      const { projectId, name } = await createNewProject(projectName);
       
-      // Mark this as a new session in localStorage
-      localStorage.setItem(`session-${sessionId}-is-new`, 'true');
-      localStorage.setItem(`session-${sessionId}-initialized`, 'true');
+      // Mark this as a new project in localStorage
+      localStorage.setItem(`project-${projectId}-is-new`, 'true');
+      localStorage.setItem(`project-${projectId}-initialized`, 'true');
       
-      // Reset project data for new session
+      // Reset project data for new project
       const newProjectData = {
-        projectName: name, // Use the session name as the default project name
+        projectName: name, // Use the project name as the default project name
         annualInterestRate: 12,
         purchasePrice: 0,
         closingCosts: 0,
@@ -178,48 +177,48 @@ const Index = () => {
       setProjectData(newProjectData);
       
       // Store initial empty state in localStorage
-      localStorage.setItem(`session-data-${sessionId}`, JSON.stringify([]));
+      localStorage.setItem(`project-data-${projectId}`, JSON.stringify([]));
       
-      // Set the current session ID immediately
-      setCurrentSessionId(sessionId);
+      // Set the current project ID immediately
+      setCurrentProjectId(projectId);
       
-      // Force refresh the SessionSidebar component by fetching sessions
-      const refreshSessions = async () => {
-        // Wait a moment for the new session to be created in the database
+      // Force refresh the ProjectSidebar component by fetching projects
+      const refreshProjects = async () => {
+        // Wait a moment for the new project to be created in the database
         await new Promise(resolve => setTimeout(resolve, 200));
         
         // Dispatch multiple events to ensure all components are refreshed
-        window.dispatchEvent(new CustomEvent('refresh-sessions', { detail: 'force-refresh' }));
+        window.dispatchEvent(new CustomEvent('refresh-projects', { detail: 'force-refresh' }));
         
         // Some components might only listen to this specific event
-        const refreshEvent = new CustomEvent('refresh-sessions', { 
-          detail: { sessionId, action: 'new-session' } 
+        const refreshEvent = new CustomEvent('refresh-projects', { 
+          detail: { projectId, action: 'new-project' } 
         });
         window.dispatchEvent(refreshEvent);
         
-        // Try to refresh the session list in the sidebar specifically
+        // Try to refresh the project list in the sidebar specifically
         const sidebarEvent = new CustomEvent('sidebar-refresh', { 
-          detail: { sessionId } 
+          detail: { projectId } 
         });
         window.dispatchEvent(sidebarEvent);
       };
       
       // Execute the refresh function
-      await refreshSessions();
+      await refreshProjects();
       
       toast({
-        title: 'New Session Created',
-        description: `Created new session: ${name}`,
+        title: 'New Project Created',
+        description: `Created new project: ${name}`,
       });
       
-      // Don't navigate, just update the current session ID which will trigger a refresh
-      // The session data will be loaded through the existing useEffect hook
-      setCurrentSessionId(sessionId);
+      // Don't navigate, just update the current project ID which will trigger a refresh
+      // The project data will be loaded through the existing useEffect hook
+      setCurrentProjectId(projectId);
     } catch (error) {
-      console.error('Error creating new session:', error);
+      console.error('Error creating new project:', error);
       toast({
         title: 'Error',
-        description: 'Failed to create new session',
+        description: 'Failed to create new project',
         variant: 'destructive',
       });
     } finally {
@@ -239,19 +238,19 @@ const Index = () => {
 
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
-      {/* Session Sidebar */}
-      <SessionSidebar 
-        onSelectSession={handleSelectSession} 
-        onNewSession={handleNewSessionClick} 
-        currentSessionId={currentSessionId}
-        onDeleteSession={handleDeleteSession}
+      {/* Project Sidebar */}
+      <ProjectSidebar 
+        onSelectProject={handleSelectProject} 
+        onNewProject={handleNewProjectClick} 
+        currentProjectId={currentProjectId}
+        onDeleteProject={handleDeleteProject}
       />
       
-      <SessionNameDialog
-        open={isSessionDialogOpen}
-        onOpenChange={setIsSessionDialogOpen}
-        onSave={handleCreateSession}
-        defaultName={pendingSessionName}
+      <ProjectNameDialog
+        open={isProjectDialogOpen}
+        onOpenChange={setIsProjectDialogOpen}
+        onSave={handleCreateProject}
+        defaultName={pendingProjectName}
       />
       
       {/* Main Content */}
@@ -259,10 +258,10 @@ const Index = () => {
         <div className="mb-8 text-center">
           <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-3">
             <TrendingUp className="text-blue-600" />
-            Real Estate Investment Analyzer
+            Project Finance Calculator
           </h1>
           <p className="text-lg text-gray-600">
-            Comprehensive cash flow analysis for Indian real estate projects
+            Comprehensive cash flow analysis for all types of projects
           </p>
         </div>
 
@@ -286,7 +285,7 @@ const Index = () => {
                   updateProjectData={updateProjectData}
                   updatePayments={updatePayments}
                   showOnlyCashFlow={true}
-                  sessionId={currentSessionId}
+                  projectId={currentProjectId}
                 />
               </CardContent>
             </Card>
@@ -307,7 +306,7 @@ const Index = () => {
                     updateProjectData={updateProjectData}
                     updatePayments={updatePayments}
                     showOnlyAnalysis={true}
-                    sessionId={currentSessionId}
+                    projectId={currentProjectId}
                   />
                 </CardContent>
               </Card>

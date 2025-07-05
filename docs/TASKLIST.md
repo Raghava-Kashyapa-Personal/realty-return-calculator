@@ -1,6 +1,17 @@
 # Project Task List & Code Review Notes
 
-*Last Updated: May 24, 2025*
+*Last Updated: July 4, 2024*
+
+## New Pending Tasks
+
+1. **Add Authentication**
+   - Implement user authentication (e.g., with Firebase Auth) to secure project data.
+2. **Deploy to clipfusion.com domain**
+   - Deploy the app to the clipfusion.com domain using Vercel or another hosting provider.
+3. **Modify XIRR calculation for cash/debt investment**
+   - Add option to treat investments as cash or debt. Allow converting payments into loans, and handle interest/repayment in cash flow and XIRR accordingly.
+4. **UI: Show analysis and cash flow in same tab**
+   - Redesign UI so that analysis and cash flow are visible together in a single tab for better usability.
 
 This document outlines pending tasks, potential improvements, and notes from code reviews for the Realty Return Calculator project.
 

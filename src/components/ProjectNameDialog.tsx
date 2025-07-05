@@ -11,19 +11,19 @@ import {
   DialogTitle,
 } from './ui/dialog';
 
-interface SessionNameDialogProps {
+interface ProjectNameDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (name: string) => void;
   defaultName?: string;
 }
 
-export function SessionNameDialog({
+export function ProjectNameDialog({
   open,
   onOpenChange,
   onSave,
   defaultName = ''
-}: SessionNameDialogProps) {
+}: ProjectNameDialogProps) {
   const [name, setName] = useState(defaultName);
   const [isMounted, setIsMounted] = useState(false);
 
@@ -45,18 +45,18 @@ export function SessionNameDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Name Your Session</DialogTitle>
+          <DialogTitle>Name Your Project</DialogTitle>
           <DialogDescription>
-            Enter a name for your new session to help you identify it later.
+            Enter a name for your new project to help you identify it later.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
           <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="sessionName" className="text-right">
-              Session Name
+            <Label htmlFor="projectName" className="text-right">
+              Project Name
             </Label>
             <Input
-              id="sessionName"
+              id="projectName"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="col-span-3"
@@ -76,7 +76,7 @@ export function SessionNameDialog({
             onClick={() => name.trim() && onSave(name.trim())}
             disabled={!name.trim()}
           >
-            Create Session
+            Create Project
           </Button>
         </DialogFooter>
       </DialogContent>

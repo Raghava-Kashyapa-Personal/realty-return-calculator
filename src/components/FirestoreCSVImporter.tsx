@@ -22,7 +22,7 @@ interface CSVEntry {
 }
 
 const FirestoreCSVImporter: React.FC<FirestoreCSVImporterProps> = ({ 
-  collectionName = 'test',
+  collectionName = 'projects',
   onImportSuccess
 }) => {
   const [csvData, setCsvData] = useState<string>('');

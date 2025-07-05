@@ -1,11 +1,13 @@
-# Realty Return Calculator
+# Project Finance Calculator
 
-This project is a web application designed to help users calculate returns on realty investments, manage cash flows, and analyze investment performance. It features interest calculation, XIRR (Extended Internal Rate of Return) calculation, and comprehensive cash flow analysis.
+_Last Updated: July 4, 2024_
+
+This project is a web application designed to help users calculate returns on project-based investments, manage cash flows, and analyze investment performance. It features interest calculation, XIRR (Extended Internal Rate of Return) calculation, and comprehensive cash flow analysis.
 
 ## Project Overview
 
-The Realty Return Calculator provides tools for:
-- Inputting and managing payment schedules, returns, and rental income
+The Project Finance Calculator provides tools for:
+- Inputting and managing payment schedules, returns, and rental income for projects
 - Calculating monthly interest on outstanding balances with daily compounding
 - Computing XIRR (Extended Internal Rate of Return) for accurate return calculations
 - Analyzing cash flows with detailed breakdowns of:
@@ -16,6 +18,7 @@ The Realty Return Calculator provides tools for:
   - XIRR (time-weighted return)
 - Importing/exporting cash flow data via CSV
 - Viewing a detailed table of all cash flow entries (payments, returns, interest) with running balances
+- Saving and loading project data to/from Firestore (Firebase)
 
 ## Environment Setup
 
@@ -23,7 +26,7 @@ The Realty Return Calculator provides tools for:
 - Node.js (v16 or higher)
 - npm or yarn
 - Google API Key (for Gemini AI features)
-- Firebase credentials (if using Firebase)
+- Firebase credentials (Firestore enabled)
 
 ### Configuration
 
@@ -38,6 +41,20 @@ The Realty Return Calculator provides tools for:
    VITE_FIREBASE_API_KEY=your_firebase_api_key_here
    # ... other environment variables
    ```
+
+### Firestore Setup
+- Ensure Firestore is enabled in your Firebase project (see Firebase Console > Firestore Database)
+- For development, you may use permissive security rules:
+  ```
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+  }
+  ```
+  **Warning:** These rules allow public access. Use only for development.
 
 ### Security Best Practices
 
@@ -58,6 +75,7 @@ This project is built with:
 - **Tailwind CSS**: For utility-first CSS styling.
 - **Lucide React**: For icons.
 - **date-fns**: For date utility functions.
+- **Firebase/Firestore**: For project data storage and sync.
 
 ## Features
 
@@ -70,7 +88,7 @@ This project is built with:
 - **Multiple Transaction Types**:
   - **Payments**: Initial and additional investments (negative cash flow)
   - **Returns**: Investment proceeds (positive cash flow)
-  - **Rental Income**: Regular income from the property (positive cash flow)
+  - **Rental Income**: Regular income from the project (positive cash flow)
   - **Interest**: Calculated interest on outstanding balances (negative cash flow)
 - **Running Balances**: Tracks the outstanding principal after each transaction
 
@@ -80,6 +98,7 @@ This project is built with:
   - Export complete transaction history to CSV for further analysis
 - **Dynamic Table View**: Displays all transactions chronologically with running balances
 - **Responsive Design**: Works on all device sizes with a clean, modern interface
+- **Firestore Integration**: Save and load project data to/from Firestore (Firebase)
 
 ### Financial Summary
 - **Total Investment**: Sum of all payment outflows
@@ -95,7 +114,7 @@ To run this project locally, follow these steps:
 1.  **Clone the repository:**
     ```sh
     git clone <YOUR_GIT_URL> # Replace with your project's Git URL
-    cd realty-return-calculator
+    cd realty-return-calculator-1
     ```
 
 2.  **Install dependencies:**
@@ -158,6 +177,10 @@ The application follows a modular architecture with clear separation of concerns
   - Handles project configuration
   - Manages basic project information
 
+- **`ProjectSidebar` (`src/components/ProjectSidebar.tsx`):**
+  - Sidebar for switching between projects
+  - Project management UI
+
 ### Business Logic
 - **`useInterestCalculator` (`src/hooks/useInterestCalculator.ts`):**
   - Central hook for interest-related calculations
@@ -194,12 +217,20 @@ The application follows a modular architecture with clear separation of concerns
 ### State Management
 - Local component state for UI-specific state
 - Lifted state for shared data (managed in parent components)
-- React Context could be added for global state if needed
+- React Context for global project state
+- Firestore for persistent project storage
 
 ### Type System
 - Strong TypeScript types for all data structures
-- Interfaces for component props and API responses
-- Type guards for runtime type checking
+
+## Recent Changes
+
+- Renamed the app from "Realty Return Calculator" to "Project Finance Calculator"
+- Changed all references from "sessions" to "projects" (UI, code, Firestore, etc.)
+- Enabled Firestore and set up development security rules
+- Removed console logs that exposed API keys
+- Updated all import paths and component names to use "project" terminology
+- Ensured saving and loading project data with Firestore works as expected
 
 ## Project Structure (Key Directories)
 
@@ -306,6 +337,4 @@ The application follows a modular architecture with clear separation of concerns
 - Scenario analysis and comparison
 - Exportable reports in PDF format
 
----
 
-*This README was last updated on May 25, 2025.*

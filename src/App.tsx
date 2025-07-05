@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
-import { SessionProvider } from "@/contexts/SessionContext";
+import { ProjectProvider } from "@/contexts/ProjectContext";
 
 const queryClient = new QueryClient();
 
@@ -14,7 +14,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <SessionProvider>
+      <ProjectProvider>
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
@@ -22,7 +22,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
-      </SessionProvider>
+      </ProjectProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );
