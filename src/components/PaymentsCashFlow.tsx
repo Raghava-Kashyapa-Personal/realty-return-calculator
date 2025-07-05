@@ -7,7 +7,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Textarea } from '@/components/ui/textarea';
 import { Payment, IncomeItem, ProjectData } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
-import { useSession } from '@/contexts/SessionContext';
+import { useProject } from '@/contexts/ProjectContext';
 import { CashFlowAnalysis } from '@/components/CashFlowAnalysis';
 import { PaymentsTable } from '@/components/payments/PaymentsTable';
 import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2, Loader2 } from 'lucide-react';
@@ -22,13 +22,13 @@ import {
 } from '@/components/payments/utils';
 import { parseISO, startOfMonth, endOfMonth, addMonths, compareAsc, isBefore, isSameDay, isWithinInterval, isValid, format as formatDate } from 'date-fns';
 import { calculateDerivedProjectEndDate } from '@/utils/projectDateUtils';
-import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetchSession, sanitizePaymentData } from '@/services/firestoreService';
+import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetchProject, sanitizePaymentData } from '@/services/firestoreService';
 import { db } from '@/firebaseConfig';
 import { doc, setDoc } from 'firebase/firestore';
-import { AITextImporter } from '@/components/AITextImporter';
+import AITextImporter from '@/components/AITextImporter';
 
 // Collection name for payments
-const PAYMENTS_COLLECTION = 'test'; // Using 'test' as specified in firestoreService.ts
+const PAYMENTS_COLLECTION = 'projects'; // Renamed from 'test' to 'projects'
 
 interface PaymentsCashFlowProps {
   projectData: ProjectData;
@@ -36,7 +36,7 @@ interface PaymentsCashFlowProps {
   updatePayments: (payments: Payment[]) => void;
   showOnlyCashFlow?: boolean;
   showOnlyAnalysis?: boolean;
-  sessionId?: string;
+  projectId?: string;
 }
 
 const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
@@ -45,10 +45,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   updatePayments,
   showOnlyCashFlow = false,
   showOnlyAnalysis = false,
-  sessionId: propSessionId
+  projectId: propProjectId
 }) => {
-  const { currentSessionId: contextSessionId } = useSession();
-  const sessionId = contextSessionId || propSessionId;
+  const { currentProjectId: contextProjectId } = useProject();
+  const projectId = contextProjectId || propProjectId;
   const [csvData, setCsvData] = useState('');
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -82,8 +82,8 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     setIsFetching(true);
     try {
       console.log('Manually fetching all database entries');
-      // If sessionId is provided, fetch only for that session
-      const { entries } = await fetchAllEntries(100, sessionId);
+      // If projectId is provided, fetch only for that project
+      const { entries } = await fetchAllEntries(100, projectId);
 
       if (entries && entries.length > 0) {
         // Create a set of existing IDs to avoid duplicates
@@ -127,8 +127,8 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
-  // Track if we've already loaded data for this session to prevent infinite loops
-  const [loadedSessions, setLoadedSessions] = useState<Set<string>>(new Set());
+  // Track if we've already loaded data for this project to prevent infinite loops
+  const [loadedProjects, setLoadedProjects] = useState<Set<string>>(new Set());
 
   // Generate a stable ID for a payment entry
   const generateStableId = (entry: Payment) => {
@@ -154,13 +154,13 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     });
   };
   
-  // Only fetch data for existing sessions
+  // Only fetch data for existing projects
   const fetchDataFromFirestore = async () => {
-    if (!sessionId) return;
+    if (!projectId) return;
     
     try {
-      console.log(`Auto-fetching database entries for session: ${sessionId}`);
-      const { entries } = await fetchAllEntries(50, sessionId);
+      console.log(`Auto-fetching database entries for project: ${projectId}`);
+      const { entries } = await fetchAllEntries(50, projectId);
 
       if (entries && entries.length > 0) {
         // Create a set of existing IDs to avoid duplicates
@@ -186,12 +186,12 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         if (entriesWithIds.length > 0) {
           // Combine with existing payments, avoiding duplicates
           updatePayments([...projectData.payments, ...entriesWithIds]);
-          console.log(`Loaded ${entriesWithIds.length} new entries for session ${sessionId}`);
+          console.log(`Loaded ${entriesWithIds.length} new entries for project ${projectId}`);
         } else {
           console.log('No new entries to add (all already exist)');
         }
       } else {
-        console.log(`No entries found for session ${sessionId}`);
+        console.log(`No entries found for project ${projectId}`);
         // Don't clear existing payments if no entries are found
         // Only clear if this is the first load
         if (projectData.payments.length === 0) {
@@ -204,46 +204,46 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
-  // Handle session changes - only clear payments when session changes to a new non-null value
+  // Handle project changes - only clear payments when project changes to a new non-null value
   useEffect(() => {
-    if (!sessionId) {
-      console.log('No session ID, clearing payments');
+    if (!projectId) {
+      console.log('No project ID, clearing payments');
       updatePayments([]);
       return;
     }
 
-    console.log('Session ID changed:', sessionId);
+    console.log('Project ID changed:', projectId);
     
-    // Only clear payments if this is a new session that we haven't loaded yet
-    if (sessionStorage.getItem(`session-${sessionId}-is-new`) === 'true') {
-      console.log('New session detected, clearing existing payments');
+    // Only clear payments if this is a new project that we haven't loaded yet
+    if (sessionStorage.getItem(`project-${projectId}-is-new`) === 'true') {
+      console.log('New project detected, clearing existing payments');
       updatePayments([]);
-      sessionStorage.setItem(`session-${sessionId}-is-new`, 'false');
+      sessionStorage.setItem(`project-${projectId}-is-new`, 'false');
     }
-  }, [sessionId]);
+  }, [projectId]);
   
-  // Clear loaded sessions when component unmounts to ensure fresh data on next mount
+  // Clear loaded projects when component unmounts to ensure fresh data on next mount
   useEffect(() => {
     return () => {
-      console.log('Clearing loaded sessions on unmount');
-      setLoadedSessions(new Set());
+      console.log('Clearing loaded projects on unmount');
+      setLoadedProjects(new Set());
     };
   }, []);
 
-  // Add listener for session refresh events
+  // Add listener for project refresh events
   useEffect(() => {
-    const handleSessionRefresh = () => {
-      if (!sessionId) {
-        toast({ title: 'No Session', description: 'Please select a session first.', variant: 'destructive' });
+    const handleProjectRefresh = () => {
+      if (!projectId) {
+        toast({ title: 'No Project', description: 'Please select a project first.', variant: 'destructive' });
         return;
       }
-      console.log('Session refresh event received, reloading data');
+      console.log('Project refresh event received, reloading data');
       
-      // Force reload data for current session
+      // Force reload data for current project
       const fetchLatestData = async () => {
         setIsFetching(true);
         try {
-          const { entries } = await fetchSession(sessionId);
+          const { entries } = await fetchProject(projectId);
           
           if (entries && entries.length > 0) {
             // Process entries with stable IDs
@@ -255,18 +255,18 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             
             // Replace all payments with the refreshed data
             updatePayments(processedEntries);
-            toast({ title: 'Data Refreshed', description: `Loaded ${entries.length} entries from session ${sessionId}` });
+            toast({ title: 'Data Refreshed', description: `Loaded ${entries.length} entries from project ${projectId}` });
             
-            // Update the loaded sessions set to include this session
-            setLoadedSessions(prev => new Set([...prev, sessionId]));
+            // Update the loaded projects set to include this project
+            setLoadedProjects(prev => new Set([...prev, projectId]));
           } else {
-            toast({ title: 'No Data', description: 'No entries found for this session.' });
+            toast({ title: 'No Data', description: 'No entries found for this project.' });
             // Clear payments on explicit refresh if no data found
             updatePayments([]);
           }
         } catch (error) {
-          console.error('Error refreshing session data:', error);
-          toast({ title: 'Error', description: 'Failed to refresh session data.', variant: 'destructive' });
+          console.error('Error refreshing project data:', error);
+          toast({ title: 'Error', description: 'Failed to refresh project data.', variant: 'destructive' });
         } finally {
           setIsFetching(false);
         }
@@ -275,9 +275,9 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       fetchLatestData();
     };
     
-    window.addEventListener('refresh-sessions', handleSessionRefresh);
-    return () => window.removeEventListener('refresh-sessions', handleSessionRefresh);
-  }, [sessionId, updatePayments]);
+    window.addEventListener('refresh-projects', handleProjectRefresh);
+    return () => window.removeEventListener('refresh-projects', handleProjectRefresh);
+  }, [projectId, updatePayments]);
 
   const projectEndDate = useMemo(() => {
     const allNonInterestEntries = [
@@ -288,18 +288,18 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   }, [projectData.payments, projectData.rentalIncome]);
 
   useEffect(() => {
-    const handleSessionRefresh = () => {
-      if (!sessionId) {
-        toast({ title: 'No Session', description: 'Please select a session first.', variant: 'destructive' });
+    const handleProjectRefresh = () => {
+      if (!projectId) {
+        toast({ title: 'No Project', description: 'Please select a project first.', variant: 'destructive' });
         return;
       }
-      console.log('Session refresh event received, reloading data');
+      console.log('Project refresh event received, reloading data');
       
-      // Force reload data for current session
+      // Force reload data for current project
       const fetchLatestData = async () => {
         setIsFetching(true);
         try {
-          const { entries } = await fetchSession(sessionId);
+          const { entries } = await fetchProject(projectId);
           
           if (entries && entries.length > 0) {
             // Process entries with stable IDs
@@ -311,18 +311,18 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             
             // Replace all payments with the refreshed data
             updatePayments(processedEntries);
-            toast({ title: 'Data Refreshed', description: `Loaded ${entries.length} entries from session ${sessionId}` });
+            toast({ title: 'Data Refreshed', description: `Loaded ${entries.length} entries from project ${projectId}` });
             
-            // Update the loaded sessions set to include this session
-            setLoadedSessions(prev => new Set([...prev, sessionId]));
+            // Update the loaded projects set to include this project
+            setLoadedProjects(prev => new Set([...prev, projectId]));
           } else {
-            toast({ title: 'No Data', description: 'No entries found for this session.' });
+            toast({ title: 'No Data', description: 'No entries found for this project.' });
             // Clear payments on explicit refresh if no data found
             updatePayments([]);
           }
         } catch (error) {
-          console.error('Error refreshing session data:', error);
-          toast({ title: 'Error', description: 'Failed to refresh session data.', variant: 'destructive' });
+          console.error('Error refreshing project data:', error);
+          toast({ title: 'Error', description: 'Failed to refresh project data.', variant: 'destructive' });
         } finally {
           setIsFetching(false);
         }
@@ -331,9 +331,9 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       fetchLatestData();
     };
     
-    window.addEventListener('refresh-sessions', handleSessionRefresh);
-    return () => window.removeEventListener('refresh-sessions', handleSessionRefresh);
-  }, [sessionId, updatePayments, toast, generateStableId]);
+    window.addEventListener('refresh-projects', handleProjectRefresh);
+    return () => window.removeEventListener('refresh-projects', handleProjectRefresh);
+  }, [projectId, updatePayments, toast, generateStableId]);
 
   const calculateCompoundedMonthlyInterest = (
     _inputTransactions: Payment[],
@@ -737,27 +737,27 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       const uniqueNewPayments = newPayments.filter(p => !existingHashes.has(`${p.month}-${p.amount}-${p.description}`));
 
       if (uniqueNewPayments.length === 0) {
-        toast({ title: "No New Data", description: "All entries already exist in the current session." });
+        toast({ title: "No New Data", description: "All entries already exist in the current project." });
         return;
       }
 
       // Update UI with new payments
       updatePayments([...projectData.payments, ...uniqueNewPayments]);
       
-      // Save to Firestore if we have a session ID
-      if (sessionId) {
+      // Save to Firestore if we have a project ID
+      if (projectId) {
         try {
-          await savePayments(uniqueNewPayments, sessionId);
+          await savePayments(uniqueNewPayments, projectId);
           toast({ title: "Success", description: `Imported ${uniqueNewPayments.length} new entries and saved to the database.` });
           
           // Trigger refresh for other components
-          window.dispatchEvent(new CustomEvent('refresh-sessions'));
+          window.dispatchEvent(new CustomEvent('refresh-projects'));
         } catch (firestoreError) {
           console.error('Error saving to Firestore:', firestoreError);
           toast({ title: "Import Warning", description: "Entries imported but failed to save to the database.", variant: "destructive" });
         }
       } else {
-        toast({ title: "Success", description: `Imported ${uniqueNewPayments.length} new entries. No session selected for saving.` });
+        toast({ title: "Success", description: `Imported ${uniqueNewPayments.length} new entries. No project selected for saving.` });
       }
       
       setCsvData('');
@@ -788,11 +788,11 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     const updatedPayments = projectData.payments.map(p => p.id === editingPayment ? updatedPayment : p);
     updatePayments(updatedPayments);
 
-    // Save to Firestore if we have a session ID
-    if (sessionId) {
+    // Save to Firestore if we have a project ID
+    if (projectId) {
       try {
         // Find today's document and update the specific payment within it
-        const { entries } = await fetchSession(sessionId);
+        const { entries } = await fetchProject(projectId);
         
         // Find and replace the payment with matching ID
         const updatedEntries = entries.map(entry => 
@@ -800,7 +800,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         );
         
         // Save the updated entries back to Firestore
-        await savePayments(updatedEntries, sessionId);
+        await savePayments(updatedEntries, projectId);
         
         toast({ description: "Entry updated and saved to the database." });
       } catch (firestoreError) {
@@ -808,7 +808,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         toast({ description: "Entry updated but failed to save to the database.", variant: "destructive" });
       }
     } else {
-      toast({ description: "Entry updated. No session selected for saving." });
+      toast({ description: "Entry updated. No project selected for saving." });
     }
 
     cancelEdit();
@@ -859,7 +859,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     // Generate a stable ID for the new payment
     paymentToAdd.id = generateStableId(paymentToAdd);
     
-    console.log('Adding new payment to session:', sessionId, {
+    console.log('Adding new payment to project:', projectId, {
       ...paymentToAdd,
       date: dateObj.toISOString(),
       month: monthNumber,
@@ -867,23 +867,23 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     });
 
     try {
-      // Save to Firestore first if we have a session ID
-      if (sessionId) {
+      // Save to Firestore first if we have a project ID
+      if (projectId) {
         try {
-          // This will save to the correct session and return the session ID
-          const savedSessionId = await saveSinglePayment(paymentToAdd, sessionId);
-          console.log('Payment saved to session:', savedSessionId);
+          // This will save to the correct project and return the project ID
+          const savedProjectId = await saveSinglePayment(paymentToAdd, projectId);
+          console.log('Payment saved to project:', savedProjectId);
           
           // Update local state with the new payment
           updatePayments([...projectData.payments, paymentToAdd]);
           
           toast({ 
             title: "Success", 
-            description: `Entry added to session ${savedSessionId}.` 
+            description: `Entry added to project ${savedProjectId}.` 
           });
           
           // Trigger refresh for other components
-          window.dispatchEvent(new CustomEvent('refresh-sessions'));
+          window.dispatchEvent(new CustomEvent('refresh-projects'));
         } catch (firestoreError) {
           console.error('Error saving to Firestore:', firestoreError);
           // Still update local state even if Firestore save fails
@@ -896,11 +896,11 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           });
         }
       } else {
-        // No session ID, just update local state
+        // No project ID, just update local state
         updatePayments([...projectData.payments, paymentToAdd]);
         toast({ 
           title: "Warning", 
-          description: "Entry added locally. No session selected - changes won't be saved to the database.",
+          description: "Entry added locally. No project selected - changes won't be saved to the database.",
           variant: "default"
         });
       }
@@ -939,11 +939,11 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       // Update local state by removing the payment
       updatePayments(projectData.payments.filter(payment => payment.id !== id));
       
-      // Remove from Firestore if we have a session ID
-      if (sessionId) {
+      // Remove from Firestore if we have a project ID
+      if (projectId) {
         try {
           // Fetch the current entries
-          const { entries } = await fetchSession(sessionId);
+          const { entries } = await fetchProject(projectId);
           
           // Filter out the payment with the matching ID
           const updatedEntries = entries.filter(entry => entry.id !== id);
@@ -956,11 +956,11 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           
           // Save the updated entries back to Firestore, replacing the entire document
           // This prevents the duplication issue
-          await setDoc(doc(db, PAYMENTS_COLLECTION, sessionId), {
+          await setDoc(doc(db, PAYMENTS_COLLECTION, projectId), {
             entries: processedEntries,
             updatedAt: new Date(),
             count: processedEntries.length,
-            sessionId: sessionId
+            projectId: projectId
           });
           
           toast({ description: "Entry deleted from database." });
@@ -977,10 +977,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   };
 
   const saveAllToFirestore = async () => {
-    if (!sessionId) {
+    if (!projectId) {
       toast({ 
-        title: 'No Session Selected', 
-        description: 'Please select or create a session first.', 
+        title: 'No Project Selected', 
+        description: 'Please select or create a project first.', 
         variant: 'destructive' 
       });
       return;
@@ -1020,7 +1020,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       };
       
       // Save to Firestore - first clear existing payments
-      const docRef = doc(db, 'test', sessionId);
+      const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
       await setDoc(docRef, {
         entries: updatedPayments.map(p => ({
           ...p,
@@ -1029,22 +1029,22 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         })),
         updatedAt: new Date(),
         count: updatedPayments.length,
-        sessionId: sessionId
+        projectId: projectId
       }, { merge: true });
       
       // Also update the project data
-      await saveProjectData(updatedProjectData, sessionId);
+      await saveProjectData(updatedProjectData, projectId);
       
       // Update the last saved interest rate
       setLastSavedInterestRate(interestRate);
       
       toast({ 
         title: 'Data and Interest Updated', 
-        description: `Project data saved with updated interest calculations to session: ${sessionId}` 
+        description: `Project data saved with updated interest calculations to project: ${projectId}` 
       });
       
       // Trigger refresh for other components
-      window.dispatchEvent(new CustomEvent('refresh-sessions'));
+      window.dispatchEvent(new CustomEvent('refresh-projects'));
       
     } catch (error) {
       console.error('Error saving to Firestore:', error);
@@ -1059,8 +1059,8 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   const handleClearSession = () => {
     updatePayments([]);
     toast({
-      title: 'Session Cleared',
-      description: 'All entries have been removed from the current session.',
+      title: 'Project Cleared',
+      description: 'All entries have been removed from the current project.',
       variant: 'default'
     });
     setIsClearSessionDialogOpen(false);
@@ -1132,7 +1132,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
               className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
             >
               <span className="text-lg">🗑️</span>
-              <span className="text-sm font-medium">Clear Session</span>
+              <span className="text-sm font-medium">Clear Project</span>
             </Button>
           </div>
           <PaymentsTable
@@ -1248,13 +1248,13 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         />
       )}
       
-      {/* Clear Session Confirmation Dialog */}
+      {/* Clear Project Confirmation Dialog */}
       <AlertDialog open={isClearSessionDialogOpen} onOpenChange={setIsClearSessionDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear Session Data</AlertDialogTitle>
+            <AlertDialogTitle>Clear Project Data</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to clear all entries from the current session? This action cannot be undone.
+              Are you sure you want to clear all entries from the current project? This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1263,7 +1263,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
               onClick={handleClearSession}
               className="bg-red-600 hover:bg-red-700"
             >
-              Clear Session
+              Clear Project
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
