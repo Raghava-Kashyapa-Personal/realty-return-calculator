@@ -15,7 +15,9 @@ dist-ssr/
 .env
 .env.*
 !.env.example
-*.env.*
+!.env.sample
+# The pattern below would re-ignore .env files, so we remove it
+# *.env.*
 !.env.example.*
 secrets.*
 *.pem
