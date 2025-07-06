@@ -24,7 +24,7 @@ import { parseISO, startOfMonth, endOfMonth, addMonths, compareAsc, isBefore, is
 import { calculateDerivedProjectEndDate } from '@/utils/projectDateUtils';
 import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetchProject, sanitizePaymentData } from '@/services/firestoreService';
 import { db } from '@/firebaseConfig';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import AITextImporter from '@/components/AITextImporter';
 
 // Collection name for payments
@@ -956,7 +956,12 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           
           // Save the updated entries back to Firestore, replacing the entire document
           // This prevents the duplication issue
-          await setDoc(doc(db, PAYMENTS_COLLECTION, projectId), {
+          const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
+          const docSnap = await getDoc(docRef);
+          const existingData = docSnap.exists() ? docSnap.data() : {};
+          await setDoc(docRef, {
+            name: existingData.name || '',
+            ownerId: existingData.ownerId || '',
             entries: processedEntries,
             updatedAt: new Date(),
             count: processedEntries.length,
@@ -1021,10 +1026,13 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       
       // Save to Firestore - first clear existing payments
       const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
+      const docSnap = await getDoc(docRef);
+      const existingData = docSnap.exists() ? docSnap.data() : {};
       await setDoc(docRef, {
+        name: existingData.name || '',
+        ownerId: existingData.ownerId || '',
         entries: updatedPayments.map(p => ({
           ...p,
-          // Ensure date is properly formatted for Firestore
           date: p.date ? (typeof p.date === 'string' ? p.date : p.date.toISOString()) : null
         })),
         updatedAt: new Date(),

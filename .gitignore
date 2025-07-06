@@ -59,3 +59,7 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# Sensitive Firebase service account keys and admin scripts
+scripts/serviceAccountKey.json
+scripts/setAdminClaim.cjs
+
