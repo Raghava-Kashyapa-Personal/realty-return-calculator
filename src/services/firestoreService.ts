@@ -386,24 +386,43 @@ export const fetchProject = async (projectId: string): Promise<{ entries: Paymen
 };
 
 /**
- * Get all projects (documents) from the payments collection
+ * Get all projects (documents) from the payments collection for a specific user
+ * @param userId The UID of the user whose projects to fetch
  * @param limit Maximum number of projects to retrieve
  * @returns Array of project objects with id, date, and entry count
  */
-export const fetchProjects = async (limitCount: number = 20) => {
+export const fetchProjects = async (userId: string, limitCount: number = 20) => {
   try {
     const projectsRef = collection(db, PAYMENTS_COLLECTION);
-    const q = query(projectsRef, orderBy('createdAt', 'desc'), limit(limitCount));
+    let q;
+    if (userId) {
+      q = query(
+        projectsRef,
+        where('ownerId', '==', userId),
+        orderBy('createdAt', 'desc'),
+        limit(limitCount)
+      );
+    } else {
+      q = query(
+        projectsRef,
+        orderBy('createdAt', 'desc'),
+        limit(limitCount)
+      );
+    }
     const querySnapshot = await getDocs(q);
     
     const projects = [];
     querySnapshot.forEach((doc) => {
-      const data = doc.data();
+      const data = doc.data() as any;
       projects.push({
         id: doc.id,
         date: data.createdAt?.toDate() || new Date(doc.id),
         entryCount: (data.entries || []).length,
-        projectId: data.projectId
+        projectId: data.projectId,
+        name: data.name || '',
+        ownerId: data.ownerId || '',
+        ownerEmail: data.ownerEmail || '',
+        ownerName: data.ownerName || ''
       });
     });
     
@@ -434,9 +453,10 @@ export const updateProjectName = async (projectId: string, newName: string) => {
 /**
  * Creates a new project in Firestore with current timestamp and name
  * @param projectName Optional name for the project
- * @returns Object with new project ID and name
+ * @param ownerId The UID of the user who owns the project
+ * @returns Object with new project ID, name, and ownerId
  */
-export const createNewProject = async (projectName?: string) => {
+export const createNewProject = async (projectName?: string, ownerId?: string, ownerEmail?: string, ownerName?: string) => {
   try {
     // Use current date as document ID (YYYY-MM-DD)
     const today = new Date().toISOString().split('T')[0];
@@ -447,10 +467,13 @@ export const createNewProject = async (projectName?: string) => {
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
       name,
-      entries: []
+      entries: [],
+      ownerId: ownerId || null,
+      ownerEmail: ownerEmail || null,
+      ownerName: ownerName || null
     });
     
-    return { projectId, name };
+    return { projectId, name, ownerId, ownerEmail, ownerName };
   } catch (error) {
     console.error('Error creating new project:', error);
     throw error;

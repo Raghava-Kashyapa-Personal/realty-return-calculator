@@ -11,9 +11,15 @@ import { fetchProject, createNewProject, deleteProject } from '@/services/firest
 import { ProjectNameDialog } from '@/components/ProjectNameDialog';
 import { useNavigate } from 'react-router-dom';
 import { useProject } from '@/contexts/ProjectContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Index = () => {
   // ...existing state
+  const { user, loading, isAdmin, signInWithGoogle, signUpWithEmail, signInWithEmail, logout } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Handle project deletion
   const handleDeleteProject = async (projectId: string) => {
@@ -154,7 +160,12 @@ const Index = () => {
     setIsProjectDialogOpen(false);
     
     try {
-      const { projectId, name } = await createNewProject(projectName);
+      const { projectId, name } = await createNewProject(
+        projectName,
+        user?.uid,
+        user?.email,
+        user?.displayName || user?.email || ''
+      );
       
       // Mark this as a new project in localStorage
       localStorage.setItem(`project-${projectId}-is-new`, 'true');
@@ -236,90 +247,195 @@ const Index = () => {
 
   const navigate = useNavigate();
 
+  // Authentication UI
+  if (loading) {
+    return <div className="flex justify-center items-center h-screen">Loading authentication...</div>;
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background">
+        <Card className="w-full max-w-md p-6">
+          <CardHeader>
+            <CardTitle>Sign In to Project Finance Calculator</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <button
+              className="w-full bg-blue-600 text-white py-2 rounded mb-4 hover:bg-blue-700 transition"
+              onClick={async () => {
+                setAuthError(null);
+                try {
+                  await signInWithGoogle();
+                } catch (err: any) {
+                  setAuthError(err.message || 'Google sign-in failed');
+                }
+              }}
+            >
+              Sign in with Google
+            </button>
+            <div className="flex gap-2 mb-4">
+              <button
+                className={`flex-1 py-1 rounded ${authMode === 'login' ? 'bg-gray-200' : 'bg-white'}`}
+                onClick={() => setAuthMode('login')}
+              >
+                Login
+              </button>
+              <button
+                className={`flex-1 py-1 rounded ${authMode === 'signup' ? 'bg-gray-200' : 'bg-white'}`}
+                onClick={() => setAuthMode('signup')}
+              >
+                Sign Up
+              </button>
+            </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAuthError(null);
+                try {
+                  if (authMode === 'login') {
+                    await signInWithEmail(email, password);
+                  } else {
+                    await signUpWithEmail(email, password);
+                  }
+                } catch (err: any) {
+                  setAuthError(err.message || 'Authentication failed');
+                }
+              }}
+              className="flex flex-col gap-3"
+            >
+              <input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                className="border rounded px-3 py-2"
+                required
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="border rounded px-3 py-2"
+                required
+              />
+              <button
+                type="submit"
+                className="w-full bg-primary text-white py-2 rounded hover:bg-primary/90 transition"
+              >
+                {authMode === 'login' ? 'Login' : 'Sign Up'}
+              </button>
+            </form>
+            {authError && <div className="text-red-600 mt-2 text-sm">{authError}</div>}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // If user is logged in, show user info and the main app
   return (
-    <div className="flex min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
-      {/* Project Sidebar */}
-      <ProjectSidebar 
-        onSelectProject={handleSelectProject} 
-        onNewProject={handleNewProjectClick} 
-        currentProjectId={currentProjectId}
-        onDeleteProject={handleDeleteProject}
-      />
-      
-      <ProjectNameDialog
-        open={isProjectDialogOpen}
-        onOpenChange={setIsProjectDialogOpen}
-        onSave={handleCreateProject}
-        defaultName={pendingProjectName}
-      />
-      
-      {/* Main Content */}
-      <div className="flex-1 px-4 py-8 overflow-auto">
-        <div className="mb-8 text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-3">
-            <TrendingUp className="text-blue-600" />
-            Project Finance Calculator
-          </h1>
-          <p className="text-lg text-gray-600">
-            Comprehensive cash flow analysis for all types of projects
-          </p>
+    <div>
+      {/* Main top bar with user info and logout */}
+      <div className="flex items-center justify-between p-4 bg-background border-b">
+        <div className="flex items-center gap-3">
+          {user.photoURL && (
+            <img src={user.photoURL} alt="avatar" className="w-8 h-8 rounded-full" />
+          )}
+          <span className="font-medium">{user.displayName || user.email}</span>
+          {isAdmin && <span className="ml-2 px-2 py-0.5 bg-yellow-200 text-yellow-800 text-xs rounded">Admin</span>}
         </div>
+        <button
+          className="bg-gray-200 px-3 py-1 rounded hover:bg-gray-300"
+          onClick={logout}
+        >
+          Logout
+        </button>
+      </div>
+      <div className="flex min-h-screen bg-gradient-to-br from-blue-50 to-green-50">
+        {/* Project Sidebar */}
+        <ProjectSidebar 
+          onSelectProject={handleSelectProject} 
+          onNewProject={handleNewProjectClick} 
+          currentProjectId={currentProjectId}
+          onDeleteProject={handleDeleteProject}
+        />
+        
+        <ProjectNameDialog
+          open={isProjectDialogOpen}
+          onOpenChange={setIsProjectDialogOpen}
+          onSave={handleCreateProject}
+          defaultName={pendingProjectName}
+        />
+        
+        {/* Main Content */}
+        <div className="flex-1 px-4 py-8 overflow-auto">
+          <div className="mb-8 text-center">
+            <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-3">
+              <TrendingUp className="text-blue-600" />
+              Project Finance Calculator
+            </h1>
+            <p className="text-lg text-gray-600">
+              Comprehensive cash flow analysis for all types of projects
+            </p>
+          </div>
 
-        <Tabs defaultValue="cashflow" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="cashflow" className="flex items-center justify-center gap-2">
-              <TrendingUp className="w-4 h-4" />
-              <span>Cash Flow</span>
-            </TabsTrigger>
-            <TabsTrigger value="analysis" className="flex items-center justify-center gap-2">
-              <BarChart3 className="w-4 h-4" />
-              <span>Analysis & Setup</span>
-            </TabsTrigger>
-          </TabsList>
+          <Tabs defaultValue="cashflow" className="space-y-6">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="cashflow" className="flex items-center justify-center gap-2">
+                <TrendingUp className="w-4 h-4" />
+                <span>Cash Flow</span>
+              </TabsTrigger>
+              <TabsTrigger value="analysis" className="flex items-center justify-center gap-2">
+                <BarChart3 className="w-4 h-4" />
+                <span>Analysis & Setup</span>
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="cashflow">
-            <Card className="shadow-sm border-gray-200">
-              <CardContent className="p-0">
-                <PaymentsCashFlow 
-                  projectData={projectData}
-                  updateProjectData={updateProjectData}
-                  updatePayments={updatePayments}
-                  showOnlyCashFlow={true}
-                  projectId={currentProjectId}
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="analysis">
-            <div className="space-y-6">
+            <TabsContent value="cashflow">
               <Card className="shadow-sm border-gray-200">
-                <CardHeader className="pb-2 px-4 pt-3">
-                  <CardTitle className="flex items-center text-base font-medium text-gray-700 gap-1.5">
-                    <TrendingUp className="w-4 h-4 text-blue-600" />
-                    Cash Flow Analysis
-                  </CardTitle>
-                </CardHeader>
                 <CardContent className="p-0">
                   <PaymentsCashFlow 
                     projectData={projectData}
                     updateProjectData={updateProjectData}
                     updatePayments={updatePayments}
-                    showOnlyAnalysis={true}
+                    showOnlyCashFlow={true}
                     projectId={currentProjectId}
                   />
                 </CardContent>
               </Card>
-              
-              <FinancialMetrics 
-                projectData={projectData} 
-                updateProjectData={updateProjectData}
-              />
-            </div>
-          </TabsContent>
-          
+            </TabsContent>
 
-        </Tabs>
+            <TabsContent value="analysis">
+              <div className="space-y-6">
+                <Card className="shadow-sm border-gray-200">
+                  <CardHeader className="pb-2 px-4 pt-3">
+                    <CardTitle className="flex items-center text-base font-medium text-gray-700 gap-1.5">
+                      <TrendingUp className="w-4 h-4 text-blue-600" />
+                      Cash Flow Analysis
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <PaymentsCashFlow 
+                      projectData={projectData}
+                      updateProjectData={updateProjectData}
+                      updatePayments={updatePayments}
+                      showOnlyAnalysis={true}
+                      projectId={currentProjectId}
+                    />
+                  </CardContent>
+                </Card>
+                
+                <FinancialMetrics 
+                  projectData={projectData} 
+                  updateProjectData={updateProjectData}
+                />
+              </div>
+            </TabsContent>
+            
+
+          </Tabs>
+        </div>
       </div>
     </div>
   );

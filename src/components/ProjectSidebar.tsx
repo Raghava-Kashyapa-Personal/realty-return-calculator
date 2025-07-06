@@ -7,6 +7,8 @@ import { X, PlusCircle, Calendar, Pencil, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { useProject } from '@/contexts/ProjectContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { fetchProjects as fetchProjectsService } from '@/services/firestoreService';
 
 // Define the structure of a session
 interface Session {
@@ -15,6 +17,8 @@ interface Session {
   entries: number;
   totalAmount: number;
   name?: string;
+  ownerEmail?: string;
+  ownerName?: string;
 }
 
 interface ProjectSidebarProps {
@@ -40,6 +44,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string>('');
   const { toast } = useToast();
+  const { user, loading: authLoading, isAdmin } = useAuth();
 
   // Handle updating a project name
   const handleUpdateProjectName = async (projectId: string, newName: string) => {
@@ -116,29 +121,25 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
 
   // Expose fetchProjects for parent/other triggers
   const fetchProjects = async () => {
+    if (!user) return;
     try {
       setLoading(true);
-      const projectsCol = collection(db, PAYMENTS_COLLECTION);
-      const q = query(projectsCol, orderBy('createdAt', 'desc'), limit(30));
-      const querySnapshot = await getDocs(q);
-      const projectsData: Session[] = [];
-      querySnapshot.forEach(doc => {
-        const data = doc.data();
-        const entries = data.entries || [];
-        // Calculate the total amount of all entries
-        const totalAmount = entries.reduce((sum: number, entry: any) => {
-          const amount = entry.amount || 0;
-          return sum + amount;
-        }, 0);
-        projectsData.push({
-          id: doc.id,
-          date: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(doc.id),
-          entries: entries.length,
-          totalAmount,
-          name: data.name || `Project ${projectsData.length + 1}`
-        });
-      });
-      setProjects(projectsData);
+      let projectsData = [];
+      if (isAdmin) {
+        // Fetch all projects for admin (pass empty string to fetch all)
+        projectsData = await fetchProjectsService('');
+      } else {
+        projectsData = await fetchProjectsService(user.uid);
+      }
+      setProjects(projectsData.map(data => ({
+        id: data.id,
+        date: data.date,
+        entries: data.entryCount,
+        totalAmount: 0,
+        name: data.name || `Project ${data.id}`,
+        ownerEmail: data.ownerEmail || '',
+        ownerName: data.ownerName || ''
+      })));
     } catch (error) {
       console.error('Error fetching projects:', error);
     } finally {
@@ -147,18 +148,16 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   };
 
   useEffect(() => {
-    fetchProjects();
-  }, []);
+    if (user) fetchProjects();
+  }, [user, isAdmin]);
 
-  // Allow refresh via window event (for decoupled triggering)
   useEffect(() => {
     const handler = () => {
-      console.log('Received refresh-projects event, refreshing projects...');
-      fetchProjects();
+      if (user) fetchProjects();
     };
     window.addEventListener('refresh-projects', handler);
     return () => window.removeEventListener('refresh-projects', handler);
-  }, []);
+  }, [user, isAdmin]);
   
   // Toggle sidebar
   const toggleSidebar = () => {
@@ -174,17 +173,16 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
     }).format(amount);
   };
   
+  if (authLoading) {
+    return <div className="w-64 p-4">Loading projects...</div>;
+  }
+  if (!user) {
+    return <div className="w-64 p-4 text-gray-500">Please sign in to view your projects.</div>;
+  }
+
   return (
     <div className={`transition-all duration-300 ${isOpen ? 'w-64' : 'w-12'} border-r border-gray-200 h-screen flex flex-col`}>
-      {/* Toggle button */}
-      <button 
-        onClick={toggleSidebar} 
-        className="absolute left-64 top-4 p-1 bg-white border border-gray-200 rounded-full shadow-sm z-10"
-        style={{ transform: isOpen ? 'translateX(50%)' : 'translateX(-50%)'}}
-      >
-        <X className={`h-4 w-4 transition-transform duration-300 ${isOpen ? 'rotate-0' : 'rotate-180'}`} />
-      </button>
-      
+      {/* Remove user info and admin badge from here. Only show project list below. */}
       {isOpen && (
         <>
           <div className="p-4 border-b border-gray-200">
@@ -198,7 +196,6 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
               New Project
             </Button>
           </div>
-          
           <div className="flex-1 overflow-y-auto">
             {loading ? (
               <div className="p-4 space-y-3">
@@ -225,53 +222,24 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                     >
                       <Calendar className="h-4 w-4 mr-2" />
                       <div className="flex flex-col flex-1 min-w-0">
-                      {editingProjectId === project.id ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={editingName}
-                            onChange={(e) => setEditingName(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            className="flex-1 px-2 py-1 text-sm border rounded"
-                            autoFocus
-                          />
-                          <button 
-                            onClick={saveEditing}
-                            className="p-1 text-green-600 hover:bg-green-100 rounded"
-                            disabled={!editingName.trim()}
-                          >
-                            <Check className="h-4 w-4" />
-                          </button>
-                          <button 
-                            onClick={cancelEditing}
-                            className="p-1 text-red-600 hover:bg-red-100 rounded"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
+                        <div className="font-medium text-sm truncate">
+                          {project.name}
                         </div>
-                      ) : (
-                        <div className="flex items-center group">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-sm truncate">
-                              {project.name}
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              {format(project.date, 'MMM d, yyyy h:mm a')}
-                            </div>
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              startEditing(project);
-                            }}
-                            className="opacity-0 group-hover:opacity-100 ml-2 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
-                            title="Edit project name"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
+                        {/* Show owner name and email for admin users, single line, compact */}
+                        {isAdmin && (project.ownerName || project.ownerEmail) && (
+                          <>
+                            {project.ownerName && (
+                              <div className="text-xs font-semibold text-gray-700">{project.ownerName}</div>
+                            )}
+                            {project.ownerEmail && (
+                              <div className="text-xs text-gray-500 break-all">{project.ownerEmail}</div>
+                            )}
+                          </>
+                        )}
+                        <div className="text-xs text-gray-500">
+                          {format(project.date, 'MMM d, yyyy h:mm a')}
                         </div>
-                      )}
-                    </div>
+                      </div>
                     </div>
                     {onDeleteProject && (
                       <Button
