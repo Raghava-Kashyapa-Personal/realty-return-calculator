@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import PaymentsCashFlow from '@/components/PaymentsCashFlow';
-import { FinancialMetrics } from '@/components/FinancialMetrics';
 import { ProjectSidebar } from '@/components/ProjectSidebar';
 import { ProjectData, Payment } from '@/types/project';
 import { TrendingUp, BarChart3 } from 'lucide-react';
@@ -425,11 +424,6 @@ const Index = () => {
                     />
                   </CardContent>
                 </Card>
-                
-                <FinancialMetrics 
-                  projectData={projectData} 
-                  updateProjectData={updateProjectData}
-                />
               </div>
             </TabsContent>
             
