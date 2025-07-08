@@ -1,14 +1,15 @@
 # Project Finance Calculator
 
-_Last Updated: July 4, 2024_
+_Last Updated: January 2025_
 
-This project is a web application designed to help users calculate returns on project-based investments, manage cash flows, and analyze investment performance. It features interest calculation, XIRR (Extended Internal Rate of Return) calculation, and comprehensive cash flow analysis.
+This project is a web application designed to help users calculate returns on project-based investments, manage cash flows, and analyze investment performance. It features sophisticated balance tracking, interest calculation, XIRR (Extended Internal Rate of Return) calculation, and comprehensive cash flow analysis.
 
 ## Project Overview
 
 The Project Finance Calculator provides tools for:
 - Inputting and managing payment schedules, returns, and rental income for projects
-- Calculating monthly interest on outstanding balances with daily compounding
+- **Smart Balance Tracking**: Only flagged transactions affect the outstanding debt principal
+- Calculating monthly interest on outstanding balances (interest is treated as an expense, not added to principal)
 - Computing XIRR (Extended Internal Rate of Return) for accurate return calculations
 - Analyzing cash flows with detailed breakdowns of:
   - Total Investment
@@ -19,6 +20,64 @@ The Project Finance Calculator provides tools for:
 - Importing/exporting cash flow data via CSV
 - Viewing a detailed table of all cash flow entries (payments, returns, interest) with running balances
 - Saving and loading project data to/from Firestore (Firebase)
+
+## Balance Calculation Logic
+
+### Understanding Outstanding Principal
+
+The application uses a simple type-based balance tracking system where **payment types directly determine their effect on outstanding debt principal**:
+
+#### Transactions That Increase Principal (Debt Drawdowns):
+- **`drawdown` type entries**: Represent actual borrowing/debt increases
+
+#### Transactions That Decrease Principal (Debt Repayments):
+- **`repayment` type entries**: Represent debt payments that reduce the outstanding balance
+
+#### Transactions That Do NOT Affect Principal:
+- **`payment` type entries**: Operating expenses, fees, construction costs, etc.
+- **`return` type entries**: Income, dividends, rental income, sale proceeds, etc.
+- **`interest` type entries**: Always treated as expenses/outflows, never added to principal
+
+### Interest Calculation Behavior
+
+- **Interest is an expense**: Interest payments are cash outflows that reduce your net return
+- **Interest is NOT capitalized**: Interest is never added to the outstanding principal balance
+- **Monthly calculation**: Interest is calculated monthly on the current outstanding principal
+- **Simple interest**: Uses the monthly rate (annual rate ÷ 12) applied to the principal balance
+
+### Example Scenarios
+
+#### Scenario 1: Property Investment with Loan
+```
+1. Property purchase (drawdown): -₹10,00,000
+   → Outstanding Principal: ₹10,00,000
+   
+2. Legal fees (payment): -₹50,000
+   → Outstanding Principal: ₹10,00,000 (unchanged)
+   
+3. Monthly interest (auto-calculated): -₹10,000
+   → Outstanding Principal: ₹10,00,000 (unchanged, interest is expense)
+   
+4. Rental income (return): +₹25,000
+   → Outstanding Principal: ₹10,00,000 (unchanged, just income)
+   
+5. Loan repayment (repayment): +₹2,00,000
+   → Outstanding Principal: ₹8,00,000 (debt reduced)
+```
+
+#### Scenario 2: All-Cash Investment
+```
+1. Property purchase (payment): -₹10,00,000
+   → Outstanding Principal: ₹0 (no debt taken)
+   
+2. Rental income (return): +₹25,000
+   → Outstanding Principal: ₹0 (just income, no debt)
+   
+3. Property sale (return): +₹12,00,000
+   → Outstanding Principal: ₹0 (sale proceeds, no debt)
+   
+→ No interest calculated since principal is always ₹0
+```
 
 ## Environment Setup
 
@@ -81,16 +140,17 @@ This project is built with:
 
 ### Financial Calculations
 - **XIRR (Extended Internal Rate of Return)**: Calculates the time-weighted return on investment, accounting for the exact timing of all cash flows
-- **Interest Calculation**: Automatically calculates monthly interest with daily compounding, handling partial months accurately
+- **Interest Calculation**: Automatically calculates monthly interest on outstanding debt principal only
 - **Net Profit Calculation**: Computes net profit after accounting for all inflows and outflows, including interest expenses
 
 ### Cash Flow Management
 - **Multiple Transaction Types**:
-  - **Payments**: Initial and additional investments (negative cash flow)
-  - **Returns**: Investment proceeds (positive cash flow)
+  - **Payments**: Expenses, investments, or debt drawdowns (negative cash flow)
+  - **Returns**: Income, proceeds, or debt repayments (positive cash flow)
   - **Rental Income**: Regular income from the project (positive cash flow)
-  - **Interest**: Calculated interest on outstanding balances (negative cash flow)
-- **Running Balances**: Tracks the outstanding principal after each transaction
+  - **Interest**: Calculated interest on outstanding debt (negative cash flow/expense)
+- **Smart Balance Tracking**: Only flagged transactions affect outstanding debt principal
+- **Toggle Buttons**: Easily mark payments as debt drawdowns or returns as debt repayments
 
 ### Data Management
 - **CSV Import/Export**: 
@@ -104,7 +164,7 @@ This project is built with:
 - **Total Investment**: Sum of all payment outflows
 - **Total Returns**: Sum of all returns and rental income
 - **Net Profit**: Total returns minus total investment and interest paid
-- **Total Interest Paid**: Sum of all interest payments
+- **Total Interest Paid**: Sum of all interest payments (expense)
 - **XIRR**: Annualized return percentage, accounting for timing of all cash flows
 
 ## Getting Started
@@ -253,81 +313,107 @@ The application follows a modular architecture with clear separation of concerns
 
 ## How It Works
 
-1. **Interest Calculation**:
-   - Interest is calculated daily and compounded monthly
-   - The daily rate is calculated as `(annual_rate / 365)`
-   - For partial months, interest is prorated based on the number of days
-   - Interest is added to the outstanding principal at the end of each month
+1. **Balance Tracking**:
+   - Outstanding principal is tracked separately from cash flows
+   - Only transactions with `debtDrawdown` or `applyToDebt` flags affect the principal
+   - This allows accurate modeling of leveraged vs. all-cash investments
 
-2. **XIRR Calculation**:
+2. **Interest Calculation**:
+   - Interest is calculated monthly on the outstanding debt principal only
+   - Interest rate is applied as: `principal × (annual_rate ÷ 12)`
+   - Interest is treated as an expense (cash outflow), not added to principal
+   - No interest is calculated when outstanding principal is zero
+
+3. **XIRR Calculation**:
    - Uses the `xirr` library for accurate time-weighted return calculations
    - Considers the exact date and amount of each cash flow
    - Handles irregular cash flow intervals
    - Properly accounts for both positive (returns, rental income) and negative (payments, interest) cash flows
 
-3. **Running Balance**:
-   - Updated after each transaction
-   - Used as the basis for interest calculations
-   - Reflects the current outstanding principal
+4. **Transaction Types**:
+   - **Payment types**: `payment` (expenses) and `drawdown` (debt increases)
+   - **Return types**: `return` (income) and `repayment` (debt reductions)
+   - **Toggle buttons**: UI provides easy toggle buttons to convert between related types
+   - **Visual indicators**: Different types show distinct visual styling
 
 ## Example Usage
 
-### Basic Investment Scenario
+### Leveraged Investment Scenario
 
 1. **Set Up Project**
-   - Enter project name (e.g., "Commercial Property Investment")
+   - Enter project name (e.g., "Leveraged Property Investment")
    - Set annual interest rate (e.g., 12%)
 
-2. **Add Initial Investment**
+2. **Add Debt Drawdown (affects principal)**
    - Click "Add Payment"
-   - Enter amount: `-10,00,000` (negative for outflow)
+   - Enter amount: `10,00,000`
    - Select date: `2025-01-01`
-   - Description: "Initial property purchase"
-   - Type: `Payment`
+   - Description: "Property purchase loan"
+   - **Toggle the debt drawdown button (💳)** to convert from `payment` to `drawdown` type
+   - Outstanding Principal: ₹10,00,000
 
-3. **Add Rental Income**
-   - Click "Add Rental Income"
+3. **Add Operating Expense (doesn't affect principal)**
+   - Click "Add Payment"
    - Enter amount: `50,000`
+   - Select date: `2025-01-15`
+   - Description: "Legal and registration fees"
+   - **Leave as `payment` type** (don't toggle the button)
+   - Outstanding Principal: ₹10,00,000 (unchanged)
+
+4. **Add Rental Income (doesn't affect principal)**
+   - Click "Add Return"
+   - Enter amount: `25,000`
    - Select date: `2025-02-01`
    - Description: "Monthly rental income"
-   - Type: `Rental Income`
+   - **Leave as `return` type** (don't toggle the button)
+   - Outstanding Principal: ₹10,00,000 (unchanged)
 
-4. **Add Final Return**
+5. **Add Debt Repayment (reduces principal)**
    - Click "Add Return"
-   - Enter amount: `12,00,000`
-   - Select date: `2025-12-31`
-   - Description: "Property sale"
-   - Type: `Return`
+   - Enter amount: `2,00,000`
+   - Select date: `2025-06-01`
+   - Description: "Partial loan repayment"
+   - **Toggle the apply to debt button (💰)** to convert from `return` to `repayment` type
+   - Outstanding Principal: ₹8,00,000
 
-5. **Calculate Interest**
+6. **Calculate Interest**
    - Click "Calculate Interest"
-   - The system will automatically calculate interest based on the daily compounding formula
-   - Interest entries will be added to the cash flow table
+   - Interest will be calculated on the varying principal balance
+   - January: ₹10,00,000 × (12% ÷ 12) = ₹10,000
+   - February-May: ₹10,00,000 × (12% ÷ 12) = ₹10,000 each month
+   - June onwards: ₹8,00,000 × (12% ÷ 12) = ₹8,000 each month
 
-6. **View Analysis**
-   - Switch to the "Analysis" tab to see:
-     - Total Investment: Sum of all payments
-     - Total Returns: Sum of all returns and rental income
-     - Net Profit: Returns minus investment and interest
-     - Total Interest Paid: Calculated interest on outstanding balance
-     - XIRR: Annualized return percentage calculated with the xirr library
+### All-Cash Investment Scenario
 
-### CSV Import/Export
+1. **Set Up Project**
+   - Enter project name (e.g., "All-Cash Property Investment")
+   - Set annual interest rate (e.g., 12%) - won't be used since no debt
 
-1. **Export Data**
-   - Click "Export to CSV" to download current transactions
-   - File includes all payment, return, and interest entries
+2. **Add Cash Investment (doesn't affect principal)**
+   - Click "Add Payment"
+   - Enter amount: `10,00,000`
+   - Description: "Property purchase - cash"
+   - **Leave as `payment` type** (this is key - don't toggle to drawdown!)
+   - Outstanding Principal: ₹0
 
-2. **Import Data**
-   - Click "Import from CSV"
-   - Upload a CSV file with columns: `Date, Amount, Description, Type`
-   - Supported types: `payment`, `return`, `rental`, `expense`
+3. **Add All Other Transactions**
+   - Rental income, expenses, sale proceeds
+   - **Keep as base types** (`payment` for expenses, `return` for income)
+   - Outstanding Principal: Always ₹0
 
-### Interest Calculation Details
-- Interest is calculated daily and compounded monthly
-- The system automatically generates interest entries at the end of each month
-- Partial months are prorated based on the number of days
-- Interest is calculated on the running balance after each transaction
+4. **Calculate Interest**
+   - No interest calculated since outstanding principal is always zero
+   - XIRR calculation will show the return on your cash investment
+
+### Understanding the Toggle Buttons
+
+- **💳 Debt Drawdown Button** (on payments): 
+  - Converts between `payment` (expense) ↔ `drawdown` (debt increase)
+  - Orange when active (drawdown), gray when inactive (payment)
+
+- **💰 Apply to Debt Button** (on returns):
+  - Converts between `return` (income) ↔ `repayment` (debt reduction)
+  - Blue when active (repayment), gray when inactive (return)
 
 ## Future Enhancements
 
@@ -336,5 +422,6 @@ The application follows a modular architecture with clear separation of concerns
 - Support for multiple currencies
 - Scenario analysis and comparison
 - Exportable reports in PDF format
+- Advanced interest calculation options (daily compounding, variable rates)
 
 

@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -172,6 +171,16 @@ export const ProjectSetup: React.FC<ProjectSetupProps> = ({ projectData, updateP
               <p className="text-xs text-gray-500 mt-1">
                 Annual discount rate for NPV calculation
               </p>
+            </div>
+            <div>
+              <Label htmlFor="autoRepayInflow">Auto-Repay Inflow</Label>
+              <input
+                id="autoRepayInflow"
+                type="checkbox"
+                checked={projectData.autoRepayInflow || false}
+                onChange={e => handleInputChange('autoRepayInflow', e.target.checked)}
+              />
+              <span className="text-xs text-gray-500 ml-2">If checked, new inflows will default to apply to principal</span>
             </div>
           </CardContent>
         </Card>

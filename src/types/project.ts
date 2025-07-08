@@ -1,4 +1,3 @@
-
 export interface InterestBreakdownItem {
   fromDate: string;
   toDate: string;
@@ -17,6 +16,8 @@ export interface Payment {
   date?: Date | string;
   type?: 'payment' | 'return' | 'interest';
   breakdown?: InterestBreakdownItem[];
+  debtDrawdown?: boolean;
+  applyToDebt?: boolean;
 }
 
 export interface IncomeItem {
@@ -63,4 +64,8 @@ export interface CashFlowRow {
   netCashFlow: number;
   cumulativeCashFlow: number;
   outstandingBalance: number;
+}
+
+export interface ProjectSettings {
+  autoRepayInflow: boolean;
 }

@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import PaymentsCashFlow from '@/components/PaymentsCashFlow';
-import { FinancialMetrics } from '@/components/FinancialMetrics';
 import { ProjectSidebar } from '@/components/ProjectSidebar';
 import { ProjectData, Payment } from '@/types/project';
 import { TrendingUp, BarChart3 } from 'lucide-react';
@@ -336,14 +335,22 @@ const Index = () => {
   // If user is logged in, show user info and the main app
   return (
     <div>
-      {/* Main top bar with user info and logout */}
+      {/* Main top bar with user info, title, and logout */}
       <div className="flex items-center justify-between p-4 bg-background border-b">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           {user.photoURL && (
             <img src={user.photoURL} alt="avatar" className="w-8 h-8 rounded-full" />
           )}
           <span className="font-medium">{user.displayName || user.email}</span>
           {isAdmin && <span className="ml-2 px-2 py-0.5 bg-yellow-200 text-yellow-800 text-xs rounded">Admin</span>}
+          {/* App Title and Subtitle */}
+          <div className="ml-8 flex flex-col">
+            <span className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <TrendingUp className="text-blue-600" />
+              Project Finance Calculator
+            </span>
+            <span className="text-sm text-gray-600">Comprehensive cash flow analysis for all types of projects</span>
+          </div>
         </div>
         <button
           className="bg-gray-200 px-3 py-1 rounded hover:bg-gray-300"
@@ -370,71 +377,19 @@ const Index = () => {
         
         {/* Main Content */}
         <div className="flex-1 px-4 py-8 overflow-auto">
-          <div className="mb-8 text-center">
-            <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-3">
-              <TrendingUp className="text-blue-600" />
-              Project Finance Calculator
-            </h1>
-            <p className="text-lg text-gray-600">
-              Comprehensive cash flow analysis for all types of projects
-            </p>
-          </div>
-
-          <Tabs defaultValue="cashflow" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="cashflow" className="flex items-center justify-center gap-2">
-                <TrendingUp className="w-4 h-4" />
-                <span>Cash Flow</span>
-              </TabsTrigger>
-              <TabsTrigger value="analysis" className="flex items-center justify-center gap-2">
-                <BarChart3 className="w-4 h-4" />
-                <span>Analysis & Setup</span>
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="cashflow">
-              <Card className="shadow-sm border-gray-200">
-                <CardContent className="p-0">
-                  <PaymentsCashFlow 
-                    projectData={projectData}
-                    updateProjectData={updateProjectData}
-                    updatePayments={updatePayments}
-                    showOnlyCashFlow={true}
-                    projectId={currentProjectId}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="analysis">
-              <div className="space-y-6">
-                <Card className="shadow-sm border-gray-200">
-                  <CardHeader className="pb-2 px-4 pt-3">
-                    <CardTitle className="flex items-center text-base font-medium text-gray-700 gap-1.5">
-                      <TrendingUp className="w-4 h-4 text-blue-600" />
-                      Cash Flow Analysis
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <PaymentsCashFlow 
-                      projectData={projectData}
-                      updateProjectData={updateProjectData}
-                      updatePayments={updatePayments}
-                      showOnlyAnalysis={true}
-                      projectId={currentProjectId}
-                    />
-                  </CardContent>
-                </Card>
-                
-                <FinancialMetrics 
-                  projectData={projectData} 
+          <div className="space-y-6">
+            {/* Integrated Cash Flow and Analysis */}
+            <Card className="shadow-sm border-gray-200">
+              <CardContent className="p-0">
+                <PaymentsCashFlow 
+                  projectData={projectData}
                   updateProjectData={updateProjectData}
+                  updatePayments={updatePayments}
+                  projectId={currentProjectId}
                 />
-              </div>
-            </TabsContent>
-            
-
-          </Tabs>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     </div>

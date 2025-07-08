@@ -1,4 +1,3 @@
-
 import { describe, it, expect, vi } from 'vitest';
 import { calculateMonthlyInterestLogic } from './interestCalculator';
 import { Payment } from '@/types/project';
@@ -13,102 +12,181 @@ vi.mock('@/components/payments/utils.tsx', () => ({
 }));
 
 describe('calculateMonthlyInterestLogic', () => {
-  it('should compound interest correctly month over month', () => {
-    const initialPayments: Payment[] = [
-      {
-        id: '1',
-        amount: 4381383,
-        type: 'payment',
-        date: new Date('2025-06-01'), 
-        month: 5 + 2025 * 12, // June 2025 (0-indexed month for consistency with Date.getMonth())
-        description: 'Initial Principal Balance',
-      },
-    ];
-    const interestRate = 12; 
-
-    const resultJune = calculateMonthlyInterestLogic({ payments: initialPayments, interestRate });
-    const juneInterestPayment = resultJune.newInterestPayments.find(
-      (p) => p.date && new Date(p.date).getFullYear() === 2025 && new Date(p.date).getMonth() === 5 
-    );
-
-    expect(juneInterestPayment).toBeDefined();
-    const juneInterestAmount = juneInterestPayment?.amount || 0;
-    expect(juneInterestAmount).toBeCloseTo(43813.83, 2);
-
-    const principalAfterJuneInterest = 4381383 + juneInterestAmount;
-    expect(principalAfterJuneInterest).toBeCloseTo(4381383 + 43813.83, 2); 
-
-    const paymentsForJulyCalc: Payment[] = [
-      {
-        id: '1', // Original payment
-        amount: 4381383,
-        type: 'payment',
-        date: new Date('2025-06-01'),
-        month: 5 + 2025 * 12, 
-        description: 'Initial Principal Balance',
-      },
-      // We don't add the June interest payment itself to the *input* for July's interest calculation logic.
-      // The logic should internally use the compounded principal (initial + June's interest) 
-      // as the startingBalance for July.
-      {
-        id: '2',
-        amount: 100000, 
-        type: 'payment',
-        date: new Date('2025-07-01'),
-        month: 6 + 2025 * 12, // July 2025
-        description: 'July Payment',
-      }
-    ];
-
-    const resultJuly = calculateMonthlyInterestLogic({ payments: paymentsForJulyCalc, interestRate });
-    const julyInterestPayment = resultJuly.newInterestPayments.find(
-      (p) => p.date && new Date(p.date).getFullYear() === 2025 && new Date(p.date).getMonth() === 6 
-    );
-
-    expect(julyInterestPayment).toBeDefined();
-    const julyInterestAmount = julyInterestPayment?.amount || 0;
-
-    const expectedPrincipalForJulyFullMonth = principalAfterJuneInterest; // This is the key check for compounding
-    const expectedJulyInterestOnOldBalance = expectedPrincipalForJulyFullMonth * (0.12 / 12);
-    
-    const julyPaymentAmount = 100000;
-    const daysInJuly = 31;
-    const julyPaymentDateDay = 1; // Payment on the 1st
-    const daysRemainingForJulyPayment = daysInJuly - julyPaymentDateDay + 1; 
-    const expectedInterestOnJulyPayment = julyPaymentAmount * (0.12 / 365) * daysRemainingForJulyPayment;
-
-    const totalExpectedJulyInterest = expectedJulyInterestOnOldBalance + expectedInterestOnJulyPayment;
-    
-    expect(julyInterestAmount).toBeCloseTo(totalExpectedJulyInterest, 2);
-  });
-
-  it('should handle mid-month payments correctly for interest calculation', () => {
+  it('should calculate interest on debt drawdown payments only', () => {
     const payments: Payment[] = [
       {
-        id: 'p1',
+        id: '1',
         amount: 100000,
         type: 'payment',
-        date: new Date('2025-07-15'), // July 15th
-        month: 6 + 2025 * 12, // July
-        description: 'Mid-month payment',
+        debtDrawdown: true, // This flag marks it as affecting principal
+        date: new Date('2025-06-01'), 
+        month: 5 + 2025 * 12,
+        description: 'Debt Drawdown Payment',
       },
+      {
+        id: '2',
+        amount: 50000,
+        type: 'payment', // Regular payment - no debt impact
+        date: new Date('2025-06-15'), 
+        month: 5 + 2025 * 12,
+        description: 'Regular Payment (no debt impact)',
+      }
     ];
     const interestRate = 12;
 
     const result = calculateMonthlyInterestLogic({ payments, interestRate });
-    const julyInterest = result.newInterestPayments.find(
+    const juneInterest = result.newInterestPayments.find(
+      (p) => p.date && new Date(p.date).getFullYear() === 2025 && new Date(p.date).getMonth() === 5 
+    );
+
+    expect(juneInterest).toBeDefined();
+    // Interest should only be calculated on the 100,000 drawdown, not the 50,000 regular payment
+    const expectedInterest = 100000 * (0.12 / 12); // Monthly interest on principal only
+    expect(juneInterest?.amount).toBeCloseTo(expectedInterest, 2);
+  });
+
+  it('should not add interest to principal balance - interest is an expense', () => {
+    const payments: Payment[] = [
+      {
+        id: '1',
+        amount: 100000,
+        type: 'payment',
+        debtDrawdown: true,
+        date: new Date('2025-06-01'),
+        month: 5 + 2025 * 12,
+        description: 'Initial Debt Drawdown',
+      }
+    ];
+    const interestRate = 12;
+
+    // Calculate June interest
+    const juneResult = calculateMonthlyInterestLogic({ payments, interestRate });
+    const juneInterest = juneResult.newInterestPayments[0];
+    
+    // Add July debt drawdown
+    const paymentsWithJuly: Payment[] = [
+      ...payments,
+      {
+        id: '2',
+        amount: 50000,
+        type: 'payment',
+        debtDrawdown: true,
+        date: new Date('2025-07-01'),
+        month: 6 + 2025 * 12,
+        description: 'July Debt Drawdown',
+      }
+    ];
+
+    // Calculate July interest - should be on original principal + July drawdown, NOT including June interest
+    const julyResult = calculateMonthlyInterestLogic({ payments: paymentsWithJuly, interestRate });
+    const julyInterest = julyResult.newInterestPayments.find(
       p => p.date && new Date(p.date).getMonth() === 6 && new Date(p.date).getFullYear() === 2025
     );
 
     expect(julyInterest).toBeDefined();
-
-    const daysInJuly = 31;
-    const paymentDateDay = 15;
-    const daysRemaining = daysInJuly - paymentDateDay + 1; // 17 days
-    const expectedInterest = 100000 * (0.12 / 365) * daysRemaining;
-
-    expect(julyInterest?.amount).toBeCloseTo(expectedInterest, 2);
-    expect(julyInterest?.description).toContain('1,00,000 (17 days)');
+    // July interest should be calculated on 150,000 principal (100k + 50k), NOT including June's interest
+    const expectedJulyInterest = 150000 * (0.12 / 12);
+    expect(julyInterest?.amount).toBeCloseTo(expectedJulyInterest, 2);
   });
 
+  it('should handle returns that reduce principal', () => {
+    const payments: Payment[] = [
+      {
+        id: '1',
+        amount: 100000,
+        type: 'payment',
+        debtDrawdown: true,
+        date: new Date('2025-06-01'),
+        month: 5 + 2025 * 12,
+        description: 'Initial Debt Drawdown',
+      },
+      {
+        id: '2',
+        amount: 30000,
+        type: 'return',
+        applyToDebt: true, // This flag marks it as reducing principal
+        date: new Date('2025-06-15'),
+        month: 5 + 2025 * 12,
+        description: 'Debt Repayment',
+      },
+      {
+        id: '3',
+        amount: 20000,
+        type: 'return', // Regular return - no debt impact
+        date: new Date('2025-06-20'),
+        month: 5 + 2025 * 12,
+        description: 'Regular Return (no debt impact)',
+      }
+    ];
+    const interestRate = 12;
+
+    const result = calculateMonthlyInterestLogic({ payments, interestRate });
+    const juneInterest = result.newInterestPayments.find(
+      (p) => p.date && new Date(p.date).getFullYear() === 2025 && new Date(p.date).getMonth() === 5 
+    );
+
+    expect(juneInterest).toBeDefined();
+    // Interest should be calculated on net principal: 100,000 (drawdown) - 30,000 (repayment) = 70,000
+    // The 20,000 regular return should NOT affect principal calculation
+    const expectedInterest = 70000 * (0.12 / 12);
+    expect(juneInterest?.amount).toBeCloseTo(expectedInterest, 2);
+  });
+
+  it('should handle regular payments and returns without affecting principal', () => {
+    const payments: Payment[] = [
+      {
+        id: '1',
+        amount: 100000,
+        type: 'payment', // Regular payment - no debt impact
+        date: new Date('2025-06-01'),
+        month: 5 + 2025 * 12,
+        description: 'Regular Payment',
+      },
+      {
+        id: '2',
+        amount: 50000,
+        type: 'return', // Regular return - no debt impact
+        date: new Date('2025-06-15'),
+        month: 5 + 2025 * 12,
+        description: 'Regular Return',
+      }
+    ];
+    const interestRate = 12;
+
+    const result = calculateMonthlyInterestLogic({ payments, interestRate });
+    
+    // Should have no interest payments since no entries affect principal
+    expect(result.newInterestPayments).toHaveLength(0);
+    expect(result.totalInterest).toBe(0);
+  });
+
+  it('should prevent negative principal balance', () => {
+    const payments: Payment[] = [
+      {
+        id: '1',
+        amount: 50000,
+        type: 'payment',
+        debtDrawdown: true,
+        date: new Date('2025-06-01'),
+        month: 5 + 2025 * 12,
+        description: 'Small Debt Drawdown',
+      },
+      {
+        id: '2',
+        amount: 100000,
+        type: 'return',
+        applyToDebt: true, // Repayment larger than principal
+        date: new Date('2025-06-15'),
+        month: 5 + 2025 * 12,
+        description: 'Large Debt Repayment',
+      }
+    ];
+    const interestRate = 12;
+
+    const result = calculateMonthlyInterestLogic({ payments, interestRate });
+    
+    // Should have no interest since principal becomes 0 (clamped, not negative)
+    expect(result.newInterestPayments).toHaveLength(0);
+    expect(result.totalInterest).toBe(0);
+  });
 });

@@ -75,26 +75,13 @@ export const savePayments = async (payments: Payment[], projectId?: string): Pro
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
-      // Document exists, update it with new payments
+      // Document exists, replace the entire entries array with the new one
       const existingData = docSnap.data();
-      const existingPayments = existingData.entries || [];
       
-      // Create a Set of existing payment IDs for quick lookup
-      const existingPaymentIds = new Set(existingPayments.map((p: Payment) => p.id));
-      
-      // Filter out any new payments that already exist (by ID)
-      const uniqueNewPayments = sanitizedPayments.filter(payment => !existingPaymentIds.has(payment.id));
-      
-      if (uniqueNewPayments.length === 0) {
-        console.log('No new payments to save - all entries already exist');
-        return docId;
-      }
-      
-      // Only update if we have new payments to add
       await updateDoc(docRef, {
-        entries: [...existingPayments, ...uniqueNewPayments],
+        entries: sanitizedPayments, // Replace entire array to preserve edits
         updatedAt: Timestamp.now(),
-        count: existingPayments.length + uniqueNewPayments.length,
+        count: sanitizedPayments.length,
         projectId: projectId || existingData.projectId
       });
     } else {

@@ -10,7 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useProject } from '@/contexts/ProjectContext';
 import { CashFlowAnalysis } from '@/components/CashFlowAnalysis';
 import { PaymentsTable } from '@/components/payments/PaymentsTable';
-import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2, Loader2 } from 'lucide-react';
+import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2, Loader2, Trash2 } from 'lucide-react';
 import { exportToCsv } from '@/utils/csvExport';
 import {
   formatCurrency,
@@ -26,6 +26,7 @@ import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetc
 import { db } from '@/firebaseConfig';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import AITextImporter from '@/components/AITextImporter';
+import { calculateMonthlyInterestLogic } from '@/utils/interestCalculator';
 
 // Collection name for payments
 const PAYMENTS_COLLECTION = 'projects'; // Renamed from 'test' to 'projects'
@@ -71,6 +72,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   const [currentInterestDetails, setCurrentInterestDetails] = useState<{ newInterestPayments: Payment[], interestRate: number } | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   const [lastSavedInterestRate, setLastSavedInterestRate] = useState<number | null>(null);
+  const [allPaymentsWithInterest, setAllPaymentsWithInterest] = useState<Payment[]>([]);
 
   // Reset interest details when core data changes
   useEffect(() => {
@@ -279,13 +281,24 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     return () => window.removeEventListener('refresh-projects', handleProjectRefresh);
   }, [projectId, updatePayments]);
 
-  const projectEndDate = useMemo(() => {
-    const allNonInterestEntries = [
-      ...projectData.payments.map(p => ({ ...p, date: p.date ? new Date(p.date) : monthToDate(p.month) })),
-      ...projectData.rentalIncome.map(r => ({ ...r, date: r.date ? new Date(r.date) : monthToDate(r.month) }))
-    ];
-    return calculateDerivedProjectEndDate(allNonInterestEntries as Payment[]);
-  }, [projectData.payments, projectData.rentalIncome]);
+  // Fix the project end date initialization
+  const [projectEndDate, setProjectEndDate] = useState<Date>(() => {
+    // Default to last entry date + 12 months, or current date + 12 months if no entries
+    if (!projectData.payments || projectData.payments.length === 0) {
+      const defaultDate = new Date();
+      defaultDate.setFullYear(defaultDate.getFullYear() + 1);
+      return defaultDate;
+    }
+    
+    const lastEntry = projectData.payments.reduce((latest, payment) => {
+      const paymentDate = payment.date ? new Date(payment.date) : monthToDate(payment.month);
+      return paymentDate > latest ? paymentDate : latest;
+    }, new Date());
+    
+    const endDate = new Date(lastEntry);
+    endDate.setFullYear(endDate.getFullYear() + 1); // Add 12 months
+    return endDate;
+  });
 
   useEffect(() => {
     const handleProjectRefresh = () => {
@@ -335,189 +348,44 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     return () => window.removeEventListener('refresh-projects', handleProjectRefresh);
   }, [projectId, updatePayments, toast, generateStableId]);
 
-  const calculateCompoundedMonthlyInterest = (
-    _inputTransactions: Payment[],
-    _annualRatePercent: number
-  ): Payment[] => {
-    // Filter out any existing interest entries to prevent duplication
-    const nonInterestTransactions = _inputTransactions.filter(p => p.type !== 'interest');
-    
-    // Deep copy to avoid mutating original data
-    const inputTransactions = JSON.parse(JSON.stringify(nonInterestTransactions));
-    const annualRatePercent = _annualRatePercent;
-
-    console.log('[InterestDebug] calculateCompoundedMonthlyInterest called with:', { numTransactions: inputTransactions.length, annualRatePercent });
-
-    if (annualRatePercent <= 0) {
-      return inputTransactions.map(p => ({
-        ...p, 
-        date: (typeof p.date === 'string' ? p.date : (p.date instanceof Date ? p.date.toISOString() : new Date(p.date || 0).toISOString()))
-      }));
-    }
-    
-    const monthlyRate = annualRatePercent / 12 / 100;
-
-    // Normalize dates for transaction objects
-    const processedTransactions = inputTransactions
-      .map(p => ({
-        ...p,
-        date: typeof p.date === 'string' ? parseISO(p.date) : (p.date || monthToDate(p.month)), 
-      }))
-      .sort((a, b) => compareAsc(a.date as Date, b.date as Date));
-
-    if (processedTransactions.length === 0) {
-      return [];
-    }
-
-    // Create a working ledger including original transactions
-    const workingLedger: Payment[] = [];
-    
-    // Add all original transactions to the working ledger
-    processedTransactions.forEach(txn => {
-      workingLedger.push({...txn, date: (txn.date as Date).toISOString()});
-    });
-    
-    // Determine the date range for interest calculation
-    const firstPaymentDate = processedTransactions[0].date as Date;
-    const lastPaymentDate = processedTransactions[processedTransactions.length - 1].date as Date;
-    
-    // Create a monthly schedule for interest calculations
-    let currentMonth = startOfMonth(firstPaymentDate);
-    const endMonth = addMonths(endOfMonth(lastPaymentDate), 1); // Add one month to include the last month
-    
-    // Track which months already have interest calculated
-    const processedMonths = new Set<string>();
-    
-    // Calculate running balance and apply interest month by month
-    // This is the key change - we'll track a running balance that includes previous interest
-    let runningBalance = 0;
-    
-    console.log('[InterestDebug] Starting interest calculation from', formatDate(currentMonth, 'yyyy-MM-dd'), 'to', formatDate(endMonth, 'yyyy-MM-dd'));
-    
-    while (isBefore(currentMonth, endMonth)) {
-      const monthKey = formatDate(currentMonth, 'yyyy-MM');
-      const monthStart = startOfMonth(currentMonth);
-      const monthEnd = endOfMonth(currentMonth);
-      
-      console.log(`[InterestDebug] Processing month: ${monthKey}`);
-      
-      // Update running balance with all transactions for this month (before interest is applied)
-      // This includes both original transactions and previously calculated interest
-      const currentMonthTransactions = workingLedger.filter(txn => {
-        const txnDate = parseISO(txn.date as string);
-        return isWithinInterval(txnDate, { start: monthStart, end: monthEnd });
-      });
-      
-      currentMonthTransactions.forEach(txn => {
-        // Note: Negative amounts increase balance (payments), positive amounts decrease balance (returns)
-        runningBalance -= txn.amount;
-        console.log(`[InterestDebug] Transaction: ${txn.description}, Amount: ${txn.amount}, New Balance: ${runningBalance}`);
-      });
-      
-      // Check if we should calculate interest for this month
-      if (runningBalance > 0 && !processedMonths.has(monthKey)) {
-        // Calculate interest based on the current running balance (includes previous interest)
-        const interest = runningBalance * monthlyRate;
-        console.log(`[InterestDebug] Calculating interest for ${monthKey}: ${runningBalance} * ${monthlyRate} = ${interest}`);
-        
-        // Create interest transaction at month end
-        const interestPaymentDate = monthEnd;
-        const interestEntry = {
-          id: `interest_${formatDate(interestPaymentDate, 'yyyyMMdd')}_${Math.random().toString(36).substring(2, 7)}`,
-          amount: Math.abs(interest), // Store as positive for the ledger
-          date: interestPaymentDate.toISOString(),
-          month: parseInt(formatDate(interestPaymentDate, 'yyyyMM')),
-          description: `Annual Interest @ ${annualRatePercent}% on balance of ${formatNumber(runningBalance)}`,
-          type: 'interest' as const,
-        };
-        
-        // Add interest transaction to the working ledger
-        workingLedger.push(interestEntry);
-        
-        // Update the running balance to include this interest (add to the debt)
-        runningBalance += Math.abs(interest);
-        console.log(`[InterestDebug] Added interest: ${interest}, New Balance: ${runningBalance}`);
-        
-        // Mark this month as processed
-        processedMonths.add(monthKey);
-      } else {
-        console.log(`[InterestDebug] Skipping interest for ${monthKey}: Balance=${runningBalance}, Already processed=${processedMonths.has(monthKey)}`);
-      }
-      
-      // Move to next month
-      currentMonth = addMonths(currentMonth, 1);
-    }
-
-    return workingLedger.sort((a, b) => {
-      const dateA = parseISO(a.date as string);
-      const dateB = parseISO(b.date as string);
-      const dateComparison = compareAsc(dateA, dateB);
-      if (dateComparison !== 0) return dateComparison;
-      
-      // If dates are the same, sort by type (payment, return, interest)
-      const typeOrder = { payment: 1, return: 2, interest: 3 };
-      return (typeOrder[a.type as keyof typeof typeOrder] || 99) - (typeOrder[b.type as keyof typeof typeOrder] || 99);
-    });
-  };
-
-  const handleCalculateInterest = useCallback(() => {
-    console.log('[InterestDebug] handleCalculateInterest called. Current Interest Rate:', interestRate);
-    try {
-      if (interestRate <= 0) {
-        toast({ title: 'No Interest to Calculate', description: 'Please set an interest rate greater than 0.' });
+  const handleCalculateInterest = () => {
+    if (!projectData.payments || projectData.payments.length === 0) {
+      toast({ title: "No Data", description: "Please add some cash flow entries first." });
         return;
       }
 
-      const nonInterestProjectPayments = projectData.payments
-        .filter(p => p.type !== 'interest'); 
-        // Date normalization happens inside calculateCompoundedMonthlyInterest
-
-      const returnsFromIncomeStream: Payment[] = projectData.rentalIncome.map((r, i): Payment => ({
-        id: r.id || `return_income_${i}_${r.month}_${r.amount}`,
-        month: r.month,
-        amount: r.amount, // Positive for returns
-        description: r.description || (r.type === 'sale' ? `Property Sale (${r.type})` : `Rental Income (${r.type || 'rental'})`),
-        date: r.date || monthToDate(r.month), // Ensure date is present
-        type: 'return', // Explicitly set as 'return' for Payment compatibility
-      }));
-
-      const allBaseTransactions = [...nonInterestProjectPayments, ...returnsFromIncomeStream];
-      console.log('[InterestDebug] All Base Transactions for calculation:', JSON.parse(JSON.stringify(allBaseTransactions)));
-
-      const newLedgerWithInterest = calculateCompoundedMonthlyInterest(allBaseTransactions, interestRate);
-      console.log('[InterestDebug] Ledger returned from calculation:', JSON.parse(JSON.stringify(newLedgerWithInterest)));
-
-      const newInterestPaymentsCount = newLedgerWithInterest.filter(p => p.type === 'interest').length;
-      console.log('[InterestDebug] New Interest Payments Count:', newInterestPaymentsCount);
-      const oldInterestPaymentsCount = allBaseTransactions.length - nonInterestProjectPayments.length - returnsFromIncomeStream.length; // Should be 0 if logic is correct
-
-      // The newLedgerWithInterest contains all original non-interest payments plus new interest.
-      // It should replace all previous payments (projectData.payments and effectively clear rentalIncome's contribution to the old payments list if it was merged before)
-      // We need to segregate the ledger back into project payments (costs and generated interest) and returns (from rentalIncome stream if they need to be kept separate)
-      // However, the simplest is to have updatePayments handle a single list that represents the entire cash flow.
-      // For now, assume updatePayments updates projectData.payments, and rentalIncome is handled separately for display/input.
-      // The interest calculation should operate on the combined flow.
+    try {
+      // Filter out existing interest payments to avoid double-counting
+      const basePayments = projectData.payments.filter(p => p.type !== 'interest');
       
-      // The `newLedgerWithInterest` is the new truth for `projectData.payments` if it's meant to hold the full ledger.
-      // Or, if `projectData.payments` should only contain costs + interest, and `projectData.rentalIncome` for returns, 
-      // then `newLedgerWithInterest` needs to be split. This seems overly complex for `updatePayments`.
-      // Let's assume `updatePayments` will set `projectData.payments` to the new comprehensive ledger.
-      // This means `projectData.rentalIncome` might become redundant for calculations if its items are now in `projectData.payments`.
-      // For now, the simplest path: `updatePayments` takes the full ledger.
-      updatePayments(newLedgerWithInterest.map(p => ({...p, date: (typeof p.date === 'string' ? p.date : (p.date as Date).toISOString()) })));
+      // Use the new interest calculation with project end date
+      const interestResult = calculateMonthlyInterestLogic({
+        payments: basePayments,
+        interestRate: interestRate,
+        projectEndDate
+      });
+      
+      // Update local state with new calculations
+      updatePayments(interestResult.allPaymentsWithInterest);
+
+      // Save the full array (including interest entries) to the database
+      if (projectId) {
+        savePayments(interestResult.allPaymentsWithInterest, projectId);
+      }
 
       toast({
-        title: 'Interest Calculated (Compounded)',
-        description: `${newInterestPaymentsCount} interest entries were generated/updated.`
+        title: 'Interest Calculated', 
+        description: `Interest calculated up to ${projectEndDate instanceof Date && !isNaN(projectEndDate) ? projectEndDate.toLocaleDateString() : 'project end'} at ${interestRate}% annual rate.` 
       });
-
     } catch (error) {
-      console.error('Error in handleCalculateInterest:', error);
-      toast({ title: 'Error', description: 'An unexpected error occurred during compounded interest calculation.', variant: 'destructive' });
+      console.error('Error calculating interest:', error);
+      toast({ 
+        title: 'Error', 
+        description: 'Failed to calculate interest. Please check your entries.',
+        variant: 'destructive' 
+      });
     }
-  }, [projectData.payments, projectData.rentalIncome, interestRate, toast, updatePayments, monthToDate]);
-
-  const allPaymentsWithInterest = useMemo(() => projectData.payments, [projectData.payments]);
+  };
 
   const allEntriesForTable: Payment[] = useMemo(() => {
     // `projectData.payments` is the single source of truth and already contains interest payments after calculation
@@ -786,22 +654,26 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
 
     // Update the payment in the local state
     const updatedPayments = projectData.payments.map(p => p.id === editingPayment ? updatedPayment : p);
-    updatePayments(updatedPayments);
+
+    // Recalculate interest with the updated payments array
+    const basePayments = updatedPayments.filter(p => p.type !== 'interest');
+    const interestResult = calculateMonthlyInterestLogic({
+      payments: basePayments,
+      interestRate: interestRate,
+      projectEndDate
+    });
+
+    // Update local state with new calculations
+    updatePayments(interestResult.allPaymentsWithInterest);
+
+    // Log the payments array being saved
+    console.log('Saving payments to database:', interestResult.allPaymentsWithInterest);
 
     // Save to Firestore if we have a project ID
     if (projectId) {
       try {
-        // Find today's document and update the specific payment within it
-        const { entries } = await fetchProject(projectId);
-        
-        // Find and replace the payment with matching ID
-        const updatedEntries = entries.map(entry => 
-          entry.id === editingPayment ? sanitizePaymentData(updatedPayment) : entry
-        );
-        
-        // Save the updated entries back to Firestore
-        await savePayments(updatedEntries, projectId);
-        
+        await savePayments(interestResult.allPaymentsWithInterest, projectId);
+        console.log('Save to Firestore successful');
         toast({ description: "Entry updated and saved to the database." });
       } catch (firestoreError) {
         console.error('Error saving to Firestore:', firestoreError);
@@ -981,196 +853,267 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     }
   };
 
-  const saveAllToFirestore = async () => {
-    if (!projectId) {
-      toast({ 
-        title: 'No Project Selected', 
-        description: 'Please select or create a project first.', 
-        variant: 'destructive' 
-      });
-      return;
-    }
+  const handleClearSession = async () => {
+    // Clear local state first
+    updatePayments([]);
     
-    try {
-      // First, get all non-interest payments
-      const nonInterestPayments = projectData.payments.filter(p => p.type !== 'interest');
-      
-      // Process rental income into returns
-      const returnsFromIncomeStream: Payment[] = projectData.rentalIncome.map((r, i) => ({
-        id: r.id || `return_income_${i}_${r.month}_${r.amount}`,
-        month: r.month,
-        amount: r.amount,
-        description: r.description || (r.type === 'sale' ? `Property Sale` : `Rental Income`),
-        date: r.date || monthToDate(r.month),
-        type: 'return',
-      }));
-
-      // Combine non-interest payments and returns
-      const allBaseTransactions = [...nonInterestPayments, ...returnsFromIncomeStream];
-      
-      // Calculate new interest with current rate
-      const newLedgerWithInterest = calculateCompoundedMonthlyInterest(allBaseTransactions, interestRate);
-      
-      // Create a complete list of payments (non-interest + new interest)
-      const updatedPayments = [...nonInterestPayments, ...newLedgerWithInterest.filter(p => p.type === 'interest')];
-      
-      // Update local state
-      updatePayments(updatedPayments);
-      
-      // Update project data with the new payments and interest rate
-      const updatedProjectData = {
-        ...projectData,
-        payments: updatedPayments,
-        annualInterestRate: interestRate
-      };
-      
-      // Save to Firestore - first clear existing payments
+    // Clear from database if we have a project ID
+    if (projectId) {
+      try {
+        // Clear the entries array in Firestore
       const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
-      const docSnap = await getDoc(docRef);
-      const existingData = docSnap.exists() ? docSnap.data() : {};
+        const docSnap = await getDoc(docRef);
+        const existingData = docSnap.exists() ? docSnap.data() : {};
+        
       await setDoc(docRef, {
-        name: existingData.name || '',
-        ownerId: existingData.ownerId || '',
-        entries: updatedPayments.map(p => ({
-          ...p,
-          date: p.date ? (typeof p.date === 'string' ? p.date : p.date.toISOString()) : null
-        })),
+          name: existingData.name || '',
+          ownerId: existingData.ownerId || '',
+          ownerEmail: existingData.ownerEmail || '',
+          ownerName: existingData.ownerName || '',
+          entries: [], // Clear all entries
         updatedAt: new Date(),
-        count: updatedPayments.length,
+          count: 0,
         projectId: projectId
       }, { merge: true });
       
-      // Also update the project data
-      await saveProjectData(updatedProjectData, projectId);
-      
-      // Update the last saved interest rate
-      setLastSavedInterestRate(interestRate);
-      
       toast({ 
-        title: 'Data and Interest Updated', 
-        description: `Project data saved with updated interest calculations to project: ${projectId}` 
+          title: 'Project Cleared',
+          description: 'All entries have been removed from the current project and database.',
+          variant: 'default'
       });
       
       // Trigger refresh for other components
       window.dispatchEvent(new CustomEvent('refresh-projects'));
-      
     } catch (error) {
-      console.error('Error saving to Firestore:', error);
+        console.error('Error clearing project from database:', error);
       toast({ 
-        title: 'Error', 
-        description: `Failed to save data to the database: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          title: 'Partially Cleared',
+          description: 'Entries removed locally but failed to clear from database.',
         variant: 'destructive' 
       });
     }
-  };
-
-  const handleClearSession = () => {
-    updatePayments([]);
+    } else {
     toast({
       title: 'Project Cleared',
       description: 'All entries have been removed from the current project.',
       variant: 'default'
     });
+    }
+    
     setIsClearSessionDialogOpen(false);
+  };
+
+  // Toggle handlers for type changes
+  const handleTogglePaymentType = async (paymentId: string, currentType: string) => {
+    // Toggle between payment <-> drawdown
+    const newType = currentType === 'payment' ? 'drawdown' : 'payment';
+    
+    const updatedPayments = projectData.payments.map(payment => 
+      payment.id === paymentId 
+        ? { ...payment, type: newType }
+        : payment
+    );
+    
+    // Calculate interest with the updated payments array
+    const basePayments = updatedPayments.filter(p => p.type !== 'interest');
+    const interestResult = calculateMonthlyInterestLogic({
+      payments: basePayments,
+      interestRate: interestRate,
+      projectEndDate
+    });
+    
+    // Update the payments with the new interest calculations
+    updatePayments(interestResult.allPaymentsWithInterest);
+    
+    // Save to database if we have a project ID
+    if (projectId) {
+      try {
+        await savePayments(interestResult.allPaymentsWithInterest, projectId);
+        toast({ description: "Entry type updated and saved to the database." });
+      } catch (error) {
+        console.error('Error saving to Firestore:', error);
+        toast({ description: "Entry type updated but failed to save to the database.", variant: "destructive" });
+      }
+    }
+  };
+
+  const handleToggleReturnType = async (paymentId: string, currentType: string) => {
+    // Toggle between return <-> repayment
+    const newType = currentType === 'return' ? 'repayment' : 'return';
+    
+    const updatedPayments = projectData.payments.map(payment => 
+      payment.id === paymentId 
+        ? { ...payment, type: newType }
+        : payment
+    );
+    
+    // Calculate interest with the updated payments array
+    const basePayments = updatedPayments.filter(p => p.type !== 'interest');
+    const interestResult = calculateMonthlyInterestLogic({
+      payments: basePayments,
+      interestRate: interestRate,
+      projectEndDate
+    });
+    
+    // Update the payments with the new interest calculations
+    updatePayments(interestResult.allPaymentsWithInterest);
+    
+    // Save to database if we have a project ID
+    if (projectId) {
+      try {
+        await savePayments(interestResult.allPaymentsWithInterest, projectId);
+        toast({ description: "Entry type updated and saved to the database." });
+      } catch (error) {
+        console.error('Error saving to Firestore:', error);
+        toast({ description: "Entry type updated but failed to save to the database.", variant: "destructive" });
+      }
+    }
   };
 
   // Return the JSX for the component
   return (
     <div className="space-y-4">
-      {!showOnlyAnalysis && (
-        <div className="space-y-3">
-          <div className="flex overflow-x-auto pb-2 space-x-3 px-4 py-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
-            <Button 
-              onClick={handleExportCSV} 
-              variant="outline" 
-              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-blue-50"
-            >
-              <span className="text-lg">📤</span>
-              <span className="text-sm font-medium">Export CSV</span>
-            </Button>
+      <div className="space-y-4">
+        {/* Integrated Header with Project Controls and Actions */}
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+            {/* Left: Project Settings */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Project End:</label>
+                <input
+                  type="date"
+                  value={projectEndDate instanceof Date && !isNaN(projectEndDate) ? projectEndDate.toISOString().split('T')[0] : ''}
+                  onChange={(e) => setProjectEndDate(new Date(e.target.value))}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-36"
+                />
+              </div>
+              
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Interest Rate:</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={interestRate}
+                    onChange={(e) => {
+                      const newRate = Number(e.target.value);
+                      setInterestRate(newRate);
+                      updateProjectData({ annualInterestRate: newRate });
+                    }}
+                    className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-20"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                  />
+                  <span className="text-sm text-gray-600">% annual</span>
+                </div>
+              </div>
+            </div>
             
-            <Button 
-              onClick={handleCalculateInterest} 
-              variant="default" 
-              className="h-12 flex items-center justify-center gap-2 py-2 px-4 bg-orange-500 hover:bg-orange-600 text-white border-orange-500"
-            >
-              <span className="text-lg">🧮</span>
-              <span className="text-sm font-medium">Calculate Interest</span>
-            </Button>
+            {/* Center: Primary Actions */}
+            <div className="flex items-center gap-3">
+              <Button 
+                onClick={() => setIsAddingNew(true)} 
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 h-9"
+                title="Add New Entry"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                <span className="text-sm">Add Entry</span>
+              </Button>
+              
+              <Button 
+                onClick={handleCalculateInterest} 
+                className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 h-9"
+                title="Calculate Interest"
+              >
+                <Calculator className="w-4 h-4 mr-2" />
+                <span className="text-sm">Calculate</span>
+              </Button>
+            </div>
             
-            <Button 
-              onClick={() => setIsImportOpen(true)} 
-              variant="outline" 
-              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-green-50"
-            >
-              <span className="text-lg">📥</span>
-              <span className="text-sm font-medium">Import CSV</span>
-            </Button>
-            
-            <Button 
-              onClick={() => setIsAIImportOpen(true)} 
-              variant="outline" 
-              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-yellow-50"
-            >
-              <span className="text-lg">✨</span>
-              <span className="text-sm font-medium">AI Import</span>
-            </Button>
-            
-            <Button 
-              onClick={saveAllToFirestore} 
-              variant="outline" 
-              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-gray-300 hover:bg-indigo-50"
-            >
-              <span className="text-lg">💾</span>
-              <span className="text-sm font-medium">Save All</span>
-            </Button>
-            
-            <Button 
-              onClick={() => setIsAddingNew(true)} 
-              variant="default" 
-              className="h-12 flex items-center justify-center gap-2 py-2 px-4 bg-blue-600 hover:bg-blue-700"
-            >
-              <span className="text-lg text-white">➕</span>
-              <span className="text-sm font-medium text-white">Add Entry</span>
-            </Button>
-            
-            <Button 
-              onClick={() => setIsClearSessionDialogOpen(true)} 
-              variant="outline" 
-              className="h-12 flex items-center justify-center gap-2 py-2 px-4 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
-            >
-              <span className="text-lg">🗑️</span>
-              <span className="text-sm font-medium">Clear Project</span>
-            </Button>
+            {/* Right: Secondary Actions */}
+            <div className="flex items-center gap-2">
+              {/* Import/Export Actions */}
+              <div className="flex items-center gap-1 pr-3 border-r border-gray-200">
+                <Button 
+                  onClick={handleExportCSV} 
+                  variant="outline" 
+                  size="sm"
+                  className="h-9 w-9 p-0"
+                  title="Export to CSV"
+                >
+                  <Download className="w-4 h-4" />
+                </Button>
+                
+                <Button 
+                  onClick={() => setIsImportOpen(true)} 
+                  variant="outline" 
+                  size="sm"
+                  className="h-9 w-9 p-0"
+                  title="Import CSV"
+                >
+                  <Upload className="w-4 h-4" />
+                </Button>
+                
+                <Button 
+                  onClick={() => setIsAIImportOpen(true)} 
+                  variant="outline" 
+                  size="sm"
+                  className="h-9 w-9 p-0"
+                  title="AI Import"
+                >
+                  <Wand2 className="w-4 h-4" />
+                </Button>
+              </div>
+
+              {/* Destructive Action */}
+              <Button 
+                onClick={() => setIsClearSessionDialogOpen(true)} 
+                variant="outline" 
+                size="sm"
+                className="h-9 w-9 p-0 text-red-600 border-red-300 hover:bg-red-50"
+                title="Clear Project"
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
-          <PaymentsTable
-            payments={allEntriesForTable}
-            editingPayment={editingPayment}
-            editValues={editValues}
-            onStartEdit={startEditPayment}
-            onSaveEdit={saveEdit}
-            onCancelEdit={cancelEdit}
-            onRemove={removePayment}
-            setEditValues={setEditValues}
-            formatCurrency={formatCurrency}
-            formatNumber={formatNumber}
-            monthToDate={monthToDate}
-            dateToMonth={dateToMonth}
-            isAddingNew={isAddingNew}
-            newPayment={newPayment}
-            setNewPayment={setNewPayment}
-            onSaveNew={handleSaveNew}
-            onCancelNew={handleCancelNew}
-          />
         </div>
-      )}
-      {showOnlyAnalysis && (
-        <CashFlowAnalysis
-          projectData={projectData}
-          allPaymentsWithInterest={allPaymentsWithInterest}
-          projectEndDate={projectEndDate}
+
+        {/* Full-Width Financial Summary */}
+        {!showOnlyCashFlow && (
+          <CashFlowAnalysis
+            projectData={projectData}
+            allPaymentsWithInterest={allPaymentsWithInterest.length > 0 ? allPaymentsWithInterest : projectData.payments}
+            projectEndDate={projectEndDate}
+          />
+        )}
+
+        {/* Cash Flow Table */}
+        <PaymentsTable
+          payments={allEntriesForTable}
+          editingPayment={editingPayment}
+          editValues={editValues}
+          onStartEdit={startEditPayment}
+          onSaveEdit={saveEdit}
+          onCancelEdit={cancelEdit}
+          onRemove={removePayment}
+          onTogglePaymentType={handleTogglePaymentType}
+          onToggleReturnType={handleToggleReturnType}
+          setEditValues={setEditValues}
+          formatCurrency={formatCurrency}
+          formatNumber={formatNumber}
+          monthToDate={monthToDate}
+          dateToMonth={dateToMonth}
+          isAddingNew={isAddingNew}
+          newPayment={newPayment}
+          setNewPayment={setNewPayment}
+          onSaveNew={handleSaveNew}
+          onCancelNew={handleCancelNew}
         />
-      )}
+      </div>
+
+      {/* Modal Dialogs */}
       {isImportOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setIsImportOpen(false)}>
           <div className="relative max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>

@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,6 +28,8 @@ interface PaymentsTableProps {
   setNewPayment?: (payment: Partial<Payment>) => void;
   onSaveNew?: () => void;
   onCancelNew?: () => void;
+  onTogglePaymentType?: (id: string, currentType: string) => void;
+  onToggleReturnType?: (id: string, currentType: string) => void;
 }
 
 export const PaymentsTable: React.FC<PaymentsTableProps> = ({
@@ -48,7 +49,9 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
   newPayment = {},
   setNewPayment = () => {},
   onSaveNew = () => {},
-  onCancelNew = () => {}
+  onCancelNew = () => {},
+  onTogglePaymentType,
+  onToggleReturnType
 }) => {
   // Local implementations that can be overridden by props
   const monthToDate = (month: number) => {
@@ -90,17 +93,18 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
 
     let runningBalance = 0;
     return sortedPayments.map(payment => {
-      // For running balance calculation:
-      if (payment.type === 'return') {
-        // Returns decrease the debt (positive amount)
-        runningBalance -= payment.amount;
-      } else if (payment.type === 'payment') {
-        // Payments increase the debt (negative amount)
+      // Simple type-based logic - no flags needed
+      if (payment.type === 'drawdown') {
+        // Drawdown increases the debt principal
         runningBalance += Math.abs(payment.amount);
-      } else if (payment.type === 'interest') {
-        // Interest increases the debt (positive amount)
-        runningBalance += payment.amount;
+      } else if (payment.type === 'repayment') {
+        // Repayment reduces the debt principal
+        runningBalance -= Math.abs(payment.amount);
+        // Ensure principal doesn't go negative (surplus/overpayment)
+        runningBalance = Math.max(0, runningBalance);
       }
+      // Note: 'payment', 'return', and 'interest' types don't affect principal balance
+      
       return { ...payment, balance: runningBalance };
     });
   };
@@ -116,6 +120,23 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
       return sum + p.amount;  // Interest is positive (increases debt)
     }
   }, 0);
+
+  // Remove the conditional column logic and headers
+  const showLoanDrawdownCol = false;
+  const showApplyToDebtCol = false;
+
+  // Add toggle button functionality for type changes
+  const handleTogglePaymentType = (paymentId: string, currentType: string) => {
+    if (onTogglePaymentType) {
+      onTogglePaymentType(paymentId, currentType);
+    }
+  };
+
+  const handleToggleReturnType = (paymentId: string, currentType: string) => {
+    if (onToggleReturnType) {
+      onToggleReturnType(paymentId, currentType);
+    }
+  };
 
   if (payments.length === 0 && !isAddingNew) return null;
 
@@ -230,12 +251,14 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                     </select>
                   ) : (
                     <div className="flex justify-center">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                        payment.type === 'return' ? 'bg-green-100 text-green-800' : 
-                        payment.type === 'interest' ? 'bg-purple-100 text-purple-800' : 
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {(payment.type as PaymentType).toUpperCase()}
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                        ${payment.type === 'repayment' ? 'bg-blue-100 text-blue-800 border border-blue-300' :
+                          payment.type === 'drawdown' ? 'bg-orange-100 text-orange-800 border border-orange-300' :
+                          payment.type === 'return' ? 'bg-green-100 text-green-800' :
+                          payment.type === 'interest' ? 'bg-purple-100 text-purple-800' :
+                          'bg-red-100 text-red-800'}
+                      `}>
+                        {payment.type.toUpperCase()}
                       </span>
                     </div>
                   )}
@@ -294,6 +317,41 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                           <Pencil className="w-3.5 h-3.5" />
                         </Button>
                       )}
+                      
+                      {/* Toggle button for PAYMENT <-> DRAWDOWN */}
+                      {(payment.type === 'payment' || payment.type === 'drawdown') && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleTogglePaymentType(payment.id, payment.type)}
+                          className={`h-7 w-7 p-0 rounded-full ${
+                            payment.type === 'drawdown'
+                              ? 'bg-orange-100 text-orange-600' 
+                              : 'bg-gray-50 text-gray-400 hover:bg-orange-50'
+                          }`}
+                          title={payment.type === 'drawdown' ? "Convert to Regular Payment" : "Convert to Debt Drawdown"}
+                        >
+                          💳
+                        </Button>
+                      )}
+                      
+                      {/* Toggle button for RETURN <-> REPAYMENT */}
+                      {(payment.type === 'return' || payment.type === 'repayment') && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleToggleReturnType(payment.id, payment.type)}
+                          className={`h-7 w-7 p-0 rounded-full ${
+                            payment.type === 'repayment'
+                              ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                              : 'bg-gray-50 text-gray-400 hover:bg-blue-50'
+                          }`}
+                          title={payment.type === 'repayment' ? "Convert to Regular Return" : "Convert to Debt Repayment"}
+                        >
+                          💰
+                        </Button>
+                      )}
+                      
                       {payment.type !== 'interest' && (
                         <Button
                           variant="ghost"
@@ -394,7 +452,7 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                     placeholder="Description"
                   />
                 </TableCell>
-                <TableCell className="p-1 pt-2 text-center">
+                <TableCell className="p-1 text-center">
                   <div className="w-full text-center justify-end space-x-1">
                     <Button
                       variant="ghost"

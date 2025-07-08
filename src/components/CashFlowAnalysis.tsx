@@ -1,11 +1,9 @@
-
 import React, { useState, useCallback } from 'react';
 import { ProjectData, Payment, IncomeItem } from '@/types/project';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { TrendingUp, BarChart2, Landmark, Scale, Percent, HandCoins, CalendarDays, RefreshCw } from 'lucide-react';
+import { TrendingUp, BarChart2, Landmark, Scale, Percent, HandCoins, CalendarDays } from 'lucide-react';
 import { format as formatDateFns, differenceInDays } from 'date-fns';
 import { monthToDate } from '@/components/payments/utils';
-import { Button } from '@/components/ui/button';
 import xirr from 'xirr';
 
 interface CashFlowAnalysisProps {
@@ -59,9 +57,6 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
   projectEndDate,
   lastUpdated = 0
 }) => {
-  // Track if initial data has been loaded
-  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
-  
   const [analysisData, setAnalysisData] = useState({
     totalInvestment: 0,
     totalReturns: 0,
@@ -75,8 +70,12 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
   // Takes payments data as an argument to avoid side effects
   const calculateAnalysis = (paymentsData: Payment[], projectDataInput: ProjectData) => {
     console.log('Calculating financial metrics with existing data');
+    console.log('paymentsData length:', paymentsData?.length || 0);
+    console.log('paymentsData:', paymentsData);
+    console.log('projectDataInput:', projectDataInput);
     
     if (!projectDataInput) {
+      console.log('No project data input, returning zeros');
       return {
         totalInvestment: 0,
         totalReturns: 0,
@@ -88,14 +87,15 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
     }
 
     console.log('Calculating financial analysis with:', {
-      payments: allPaymentsWithInterest.length,
-      rental: projectData.rentalIncome.length
+      payments: paymentsData?.length || 0,
+      rental: projectDataInput.rentalIncome?.length || 0
     });
 
     // Total payments (only principal, not interest)
     let totalPayments = 0;
     paymentsData.forEach(p => {
       if (p.type === 'payment') {
+        console.log('Found payment:', p.amount);
         totalPayments += p.amount;
       }
     });
@@ -104,6 +104,7 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
     let totalInterestPaid = 0;
     paymentsData.forEach(p => {
       if (p.type === 'interest') {
+        console.log('Found interest:', p.amount);
         totalInterestPaid += Math.abs(p.amount); // Ensure positive for display
       }
     });
@@ -112,37 +113,67 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
     let totalReturns = 0;
     
     // Add rental income
-    projectDataInput.rentalIncome.forEach(ri => {
+    projectDataInput.rentalIncome?.forEach(ri => {
+      console.log('Found rental income:', ri.amount);
       totalReturns += ri.amount;
     });
     
     // Add return payments
     paymentsData.forEach(p => {
       if (p.type === 'return') {
+        console.log('Found return:', p.amount);
         totalReturns += p.amount;
       }
     });
 
-    // Calculate total investment (payments - interest)
-    const totalInvestment = totalPayments - totalInterestPaid;
+    // Calculate total investment (payments + interest paid)
+    const totalInvestment = Math.abs(totalPayments) + totalInterestPaid;
 
     
     // Net profit calculation
-    const netProfit = totalReturns + totalInvestment;
+    const netProfit = totalReturns - totalInvestment;
+    
+    console.log('Raw calculations:', {
+      totalPayments,
+      totalInterestPaid,
+      totalReturns,
+      totalInvestment,
+      netProfit
+    });
     
     // Calculate XIRR with all cash flows
+    let outstandingPrincipal = 0;
     const allCashFlows: CashFlowItem[] = [
-      // Ensure all payments have a type property
-      ...paymentsData.map(p => ({
-        ...p,
-        type: p.type || 'payment' as const
-      })),
+      // Payments: exclude debt drawdowns from IRR
+      ...paymentsData
+        .filter(p => !(p.type === 'payment' && p.debtDrawdown))
+        .map(p => ({
+          ...p,
+          type: p.type || 'payment' as const
+        })),
+      // Returns: handle applyToDebt logic
+      ...paymentsData
+        .filter(p => p.type === 'return' && p.applyToDebt)
+        .flatMap(p => {
+          // Calculate principal remaining before this repayment
+          // (We need to reconstruct the principal balance up to this point)
+          // For simplicity, assume payments are sorted chronologically
+          // We'll do a simple running total here
+          // (In a more robust system, this should be calculated outside the map)
+          let repayment = p.amount;
+          let principalToApply = Math.min(repayment, outstandingPrincipal);
+          let excess = repayment - principalToApply;
+          // Update outstanding principal
+          outstandingPrincipal = Math.max(0, outstandingPrincipal - principalToApply);
+          // Only include the excess as a positive cash flow
+          return excess > 0 ? [{ ...p, amount: excess, type: 'return' as const }] : [];
+        }),
       // Add rental income with proper typing
-      ...projectDataInput.rentalIncome.map(ri => ({
+      ...(projectDataInput.rentalIncome?.map(ri => ({
         ...ri,
         type: ri.type as 'rental',
         id: ri.id || `rental-${ri.month}-${ri.amount}`
-      }))
+      })) || [])
     ];
     
     const xirrValue = calculateXIRR(allCashFlows);
@@ -158,7 +189,7 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
     
     console.log('Analysis results:', result);
     return result;
-  }; // Removed dependency array since it's no longer a useCallback
+  };
 
   // Currency formatter
   const formatCurrency = (value: number, isInvestment: boolean = false) => {
@@ -171,36 +202,25 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
     }).format(displayValue);
   };
   
-  // Load data once when component first mounts or when tab is switched
-  // This provides initial data without automatic recalculation on every change
+  // Recalculate whenever the data changes
   React.useEffect(() => {
-    if (!initialDataLoaded && allPaymentsWithInterest.length > 0) {
-      console.log('Loading initial data for CashFlowAnalysis');
+    if (projectData && allPaymentsWithInterest) {
+      console.log('Data changed, recalculating analysis');
       const result = calculateAnalysis(allPaymentsWithInterest, projectData);
       setAnalysisData(result);
-      setInitialDataLoaded(true);
     }
-  }, [initialDataLoaded, allPaymentsWithInterest.length, projectData]);
-  
-  // Handle manual refresh - only recalculates metrics using existing data
-  const handleRefresh = () => {
-    console.log('Manual refresh triggered - recalculating metrics only');
-    // Use existing interest data without modifying it
-    const result = calculateAnalysis(allPaymentsWithInterest, projectData);
-    setAnalysisData(result);
-    console.log('Metrics manually refreshed at', new Date().toISOString());
-  };
+  }, [allPaymentsWithInterest, projectData, projectEndDate, lastUpdated]);
 
   const MetricCard: React.FC<{ title: string; value: string; icon: React.ReactNode; description?: string }> = 
     ({ title, value, icon, description }) => (
-    <Card className="flex-1 min-w-[200px] shadow-lg hover:shadow-xl transition-shadow duration-300">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+    <Card className="flex-1 min-w-[160px] shadow-sm hover:shadow-md transition-shadow duration-200">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-3 px-3">
+        <CardTitle className="text-xs font-medium">{title}</CardTitle>
         {icon}
       </CardHeader>
-      <CardContent className="text-left">
-        <div className="text-2xl font-bold">{value}</div>
-        {description && <p className="text-xs text-muted-foreground block text-left">{description}</p>}
+      <CardContent className="px-3 pb-3">
+        <div className="text-lg font-bold">{value}</div>
+        {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
       </CardContent>
     </Card>
   );
@@ -213,65 +233,47 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
   const formattedEndDate = projectEndDate ? formatDateFns(projectEndDate, 'MMM yyyy') : 'Not set';
 
   return (
-    <div className="space-y-6 p-4 bg-gray-50 rounded-lg">
-      <div className="flex justify-between items-center mb-4">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-700">Project Financial Summary</h2>
-          {projectEndDate && (
-            <p className="text-sm text-muted-foreground">
-              Project End Date: {formattedEndDate}
-            </p>
-          )}
-        </div>
-        <Button 
-          onClick={handleRefresh} 
-          size="sm" 
-          variant="outline" 
-          className="flex items-center gap-1">
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
+    <div className="space-y-3 p-3 bg-white rounded-lg border border-gray-200">
+      <div>
+        <h3 className="text-lg font-medium text-gray-700">Financial Summary</h3>
+        {projectEndDate && (
+          <p className="text-xs text-muted-foreground">
+            Project End: {formattedEndDate}
+          </p>
+        )}
       </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <MetricCard 
           title="Total Investment"
           value={formatCurrency(analysisData.totalInvestment, true)}
-          icon={<Landmark className="h-5 w-5 text-blue-500" />}
-          description="Principal + Interest payments"
+          icon={<Landmark className="h-4 w-4 text-blue-500" />}
+          description="Principal + Interest"
         />
         <MetricCard 
           title="Total Returns"
           value={formatCurrency(analysisData.totalReturns)}
-          icon={<TrendingUp className="h-5 w-5 text-green-500" />}
-          description="Total rental and sale income"
+          icon={<TrendingUp className="h-4 w-4 text-green-500" />}
+          description="Rental + Sale income"
         />
         <MetricCard 
           title="Net Profit"
           value={formatCurrency(analysisData.netProfit)}
-          icon={<Scale className="h-5 w-5 text-purple-500" />}
-          description="Total Returns - Total Investment"
+          icon={<Scale className="h-4 w-4 text-purple-500" />}
+          description="Returns - Investment"
         />
         <MetricCard 
-          title="Total Interest Paid"
+          title="Interest Paid"
           value={formatCurrency(analysisData.totalInterestPaid)}
-          icon={<HandCoins className="h-5 w-5 text-red-500" />}
-          description="Cumulative interest paid on debt"
+          icon={<HandCoins className="h-4 w-4 text-red-500" />}
+          description="Total interest expense"
         />
         <MetricCard 
           title="XIRR"
           value={`${analysisData.xirrValue.toFixed(2)}%`}
-          icon={<Percent className="h-5 w-5 text-yellow-500" />}
-          description="Time-weighted return rate"
+          icon={<Percent className="h-4 w-4 text-yellow-500" />}
+          description="Annualized return"
         />
-        {projectEndDate && (
-          <MetricCard 
-            title="Project End Date"
-            value={formatDateFns(projectEndDate, 'MMM dd, yyyy')}
-            icon={<CalendarDays className="h-5 w-5 text-teal-500" />}
-            description="Derived from last cash flow"
-          />
-        )}
       </div>
     </div>
   );
