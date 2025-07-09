@@ -12,6 +12,9 @@ interface AITextImporterProps {
   onClose: () => void;
 }
 
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 2000; // 2 seconds
+
 const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClose }) => {
   const [rawText, setRawText] = useState<string>('');
   const [csvResult, setCsvResult] = useState<string>('');
@@ -25,7 +28,12 @@ const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClose }) =>
       console.error('VITE_GOOGLE_API_KEY is not set in environment variables.');
       return null;
     }
-    return new GoogleGenerativeAI(apiKey);
+    try {
+      return new GoogleGenerativeAI(apiKey);
+    } catch (err) {
+      console.error('Failed to initialize GoogleGenerativeAI:', err);
+      return null;
+    }
   }, []);
 
   const convertToCSV = async (): Promise<void> => {
@@ -35,8 +43,7 @@ const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClose }) =>
     }
 
     if (!genAI) {
-      const errorMsg = 'Google API key is not configured. Please set VITE_GOOGLE_API_KEY in your .env file and restart the server.';
-      setError(errorMsg);
+      setError('Google API key is not configured or invalid.');
       toast({
         title: "Configuration Error",
         description: "Could not connect to the AI service.",
@@ -48,36 +55,29 @@ const AITextImporter: React.FC<AITextImporterProps> = ({ onImport, onClose }) =>
 
     setIsConverting(true);
     setError('');
-    
     try {
-      // Use the confirmed working model
       const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-      
       const prompt = `Convert the following financial transaction text to CSV format with exactly these headers: date,amount,description\n\nIMPORTANT RULES:\n1. Format all dates as YYYY-MM-DD (ISO 8601).\n2. All payment amounts MUST be NEGATIVE numbers (e.g., -250000 for a payment of 250,000).\n3. All income/return amounts must be POSITIVE numbers.\n4. Remove all currency symbols (like Rs.) and commas from amounts.\n5. The description should be clear and concise.\n6. If a date is ambiguous (e.g., 'May 2025'), use the first day of the month (e.g., '2025-05-01').\n7. ONLY return the raw CSV data, starting with the header row. Do not include any other text or explanations.\n\nText to convert:\n${rawText}`;
-      
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const csvData = response.text().trim();
-      
       const lines = csvData.split('\n').filter(line => line.trim());
       if (lines.length < 2 || !lines[0].toLowerCase().includes('date,amount,description')) {
         throw new Error('AI did not return a valid CSV with the required headers (date,amount,description).');
       }
-      
       setCsvResult(csvData);
       toast({
         title: "Success!",
         description: `Converted text to CSV with ${lines.length - 1} transaction(s).`,
         duration: 3000,
       });
-      
     } catch (err) {
       console.error('Error converting text to CSV:', err);
-      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`Failed to convert text: ${errorMessage}`);
       toast({
         title: "Conversion Failed",
-        description: "The AI could not process the text. Please check the format and try again.",
+        description: errorMessage,
         variant: "destructive",
         duration: 5000,
       });
