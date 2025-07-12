@@ -415,6 +415,165 @@ The application follows a modular architecture with clear separation of concerns
   - Converts between `return` (income) ↔ `repayment` (debt reduction)
   - Blue when active (repayment), gray when inactive (return)
 
+## XIRR Calculation Logic
+
+### What is XIRR?
+XIRR (Extended Internal Rate of Return) measures the **actual annualized return to the investor** based on the exact timing and amounts of cash flows. It answers the question: "What interest rate would I need to get from a bank to achieve the same returns as this investment?"
+
+### Key Principle: Investor's Perspective
+XIRR should **only include cash flows that actually impact the investor's wallet**. 
+
+**What counts as investor cash flow:**
+- Money the investor pays out of their pocket (expenses, fees, interest)
+- Money the investor receives in their pocket (net returns, rental income)
+
+**What does NOT count as investor cash flow:**
+- Borrowed money (drawdowns) - this is the lender's money, not the investor's
+- Loan repayments - this money goes to the lender, not the investor's pocket
+- Internal loan movements and debt refinancing
+
+### Transaction Types and XIRR Treatment
+
+#### 1. **Payments** (`payment` type)
+- **Represents**: Money the investor pays out (construction costs, fees, etc.)
+- **XIRR Treatment**: **Negative cash flow** (money out of investor's pocket)
+- **Example**: ₹50,000 legal fees → -₹50,000 in XIRR
+
+#### 2. **Drawdowns** (`drawdown` type)
+- **Represents**: Money the investor borrows/draws from loan to fund project
+- **XIRR Treatment**: **NOT INCLUDED** (this is borrowed money, not investor's cash)
+- **Example**: ₹10,00,000 loan drawdown for property purchase → **₹0 in XIRR**
+
+#### 3. **Returns** (`return` type)
+- **Represents**: Money the investor receives back
+- **XIRR Treatment**: **Positive cash flow** (money into investor's pocket)
+- **Example**: ₹25,000 rental income → +₹25,000 in XIRR
+
+#### 4. **Repayments** (`repayment` type) - **COMPLEX CASE**
+- **Represents**: Money received that partially pays down loan and partially returns to investor
+- **XIRR Treatment**: **Only the net return portion** is positive cash flow
+- **Example**: ₹10,00,000 repayment with ₹6,00,000 to loan + ₹4,00,000 net return → +₹4,00,000 in XIRR
+- **Note**: The ₹6,00,000 loan repayment is NOT investor cash flow (it goes to lender)
+
+#### 5. **Interest** (`interest` type)
+- **Represents**: Interest expense paid by investor
+- **XIRR Treatment**: **Negative cash flow** (money out of investor's pocket)
+- **Example**: ₹10,000 monthly interest → -₹10,000 in XIRR
+
+#### 6. **Rental Income** (separate from payments)
+- **Represents**: Regular income from the project
+- **XIRR Treatment**: **Positive cash flow** (money into investor's pocket)
+- **Example**: ₹25,000 monthly rent → +₹25,000 in XIRR
+
+### Loan Adjustment Logic for XIRR
+
+When processing **returns** and **repayments**, the system must determine how much goes to:
+1. **Loan Principal Reduction**: Does NOT count as investor cash flow
+2. **Net Return to Investor**: DOES count as positive cash flow for XIRR
+
+#### Automatic Loan Adjustment Rules:
+1. **If outstanding loan exists**: Returns automatically apply to loan first, remainder goes to investor
+2. **If no outstanding loan**: Full amount goes to investor as net return
+3. **Manual override**: Users can manually adjust the loan vs return split
+
+### XIRR Calculation Examples
+
+#### Example 1: Simple All-Cash Investment
+```
+Date        | Transaction Type | Amount      | XIRR Cash Flow
+2025-01-01  | Payment         | -₹10,00,000 | -₹10,00,000
+2025-02-01  | Return          | +₹25,000    | +₹25,000
+2025-03-01  | Return          | +₹25,000    | +₹25,000
+2025-12-01  | Return (Sale)   | +₹12,00,000 | +₹12,00,000
+
+XIRR Input: [
+  {date: '2025-01-01', amount: -1000000},
+  {date: '2025-02-01', amount: 25000},
+  {date: '2025-03-01', amount: 25000},
+  {date: '2025-12-01', amount: 1200000}
+]
+```
+
+#### Example 2: Leveraged Investment with Loan Tracking
+```
+Date        | Transaction Type | Amount      | Loan Balance | XIRR Cash Flow | Notes
+2025-01-01  | Drawdown        | -₹10,00,000 | ₹10,00,000   | ₹0             | Borrowed money, not investor cash
+2025-01-15  | Payment         | -₹50,000    | ₹10,00,000   | -₹50,000       | Investor pays fees
+2025-02-01  | Interest        | -₹10,000    | ₹10,00,000   | -₹10,000       | Investor pays interest
+2025-02-01  | Return          | +₹25,000    | ₹9,75,000    | +₹0            | All goes to loan repayment
+2025-06-01  | Repayment       | +₹10,00,000 | ₹0           | +₹25,000       | ₹9,75,000 to loan, ₹25,000 to investor
+
+XIRR Input: [
+  {date: '2025-01-15', amount: -50000},
+  {date: '2025-02-01', amount: -10000},
+  {date: '2025-06-01', amount: 25000}
+]
+```
+
+#### Example 3: Mixed Investment with Manual Loan Adjustments
+```
+Date        | Transaction Type | Amount      | Loan Adj | Net Return | XIRR Cash Flow
+2025-01-01  | Drawdown        | -₹10,00,000 | -        | -          | ₹0 (borrowed money)
+2025-06-01  | Repayment       | +₹10,00,000 | ₹6,00,000| ₹4,00,000  | +₹4,00,000
+2025-12-01  | Return          | +₹2,00,000  | -        | ₹2,00,000  | +₹2,00,000
+
+XIRR Input: [
+  {date: '2025-06-01', amount: 400000},
+  {date: '2025-12-01', amount: 200000}
+]
+```
+
+### Implementation Requirements
+
+#### 1. **Process Payments with Loan Tracking**
+```typescript
+// First, process all payments to calculate loan adjustments
+const processedPayments = processPaymentsWithLoanTracking(payments, autoApplyToLoan);
+
+// Then extract IRR cash flows
+const irrCashFlows = getIRRCashFlows(processedPayments);
+```
+
+#### 2. **Cash Flow Extraction Rules**
+- **Payments**: Full amount as negative cash flow (investor's expense)
+- **Drawdowns**: NOT INCLUDED (borrowed money, not investor's cash)
+- **Returns**: Only `calculatedNetReturn` as positive cash flow (investor's income)
+- **Repayments**: Only `calculatedNetReturn` as positive cash flow (investor's income)
+- **Interest**: Full amount as negative cash flow (investor's expense)
+
+#### 3. **Validation**
+- Must have both positive and negative cash flows
+- At least 2 cash flows required
+- All cash flows must have valid dates
+- Amounts must be non-zero
+
+#### 4. **Error Handling**
+- "All transactions negative" → Check if returns are properly calculating net returns
+- "All transactions positive" → Check if payments/drawdowns are included
+- "Insufficient cash flows" → Need at least 2 transactions
+
+### Common Issues and Solutions
+
+#### Issue: "Transactions must not all be negative"
+**Cause**: Returns/repayments are not generating positive cash flows, or drawdowns are incorrectly included as negative cash flows
+**Solution**: 
+- Verify that `calculatedNetReturn` is > 0 for returns/repayments
+- Ensure drawdowns are NOT included in XIRR calculation (they're borrowed money)
+
+#### Issue: XIRR showing 0% despite positive returns
+**Cause**: Loan adjustments consuming all returns, or no positive cash flows reaching investor
+**Solution**: Check loan balance calculations and manual adjustments
+
+#### Issue: XIRR too high/low
+**Cause**: Including borrowed money or loan movements as cash flows
+**Solution**: 
+- Exclude drawdowns entirely (borrowed money is not investor cash flow)
+- Ensure only net returns (after loan adjustments) are included
+
+#### Issue: No cash flows for XIRR calculation
+**Cause**: All transactions are drawdowns or loan movements
+**Solution**: Ensure you have actual investor expenses (payments, interest) and investor income (net returns)
+
 ## Future Enhancements
 
 - Graphical visualization of cash flows over time

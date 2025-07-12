@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Payment, IncomeItem, ProjectData } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
 import { useProject } from '@/contexts/ProjectContext';
+import { SaveDiscardActionBar, CompactSaveButton } from '@/components/SaveDiscardActionBar';
 import { CashFlowAnalysis } from '@/components/CashFlowAnalysis';
 import { PaymentsTable } from '@/components/payments/PaymentsTable';
 import { Plus, ArrowUpDown, X, Upload, Copy, Calculator, Save, Database, Download, Wand2, Loader2, Trash2 } from 'lucide-react';
@@ -22,9 +23,7 @@ import {
 } from '@/components/payments/utils';
 import { parseISO, startOfMonth, endOfMonth, addMonths, compareAsc, isBefore, isSameDay, isWithinInterval, isValid, format as formatDate } from 'date-fns';
 import { calculateDerivedProjectEndDate } from '@/utils/projectDateUtils';
-import { savePayments, saveSinglePayment, saveProjectData, fetchAllEntries, fetchProject, sanitizePaymentData } from '@/services/firestoreService';
-import { db } from '@/firebaseConfig';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { fetchAllEntries, fetchProject, sanitizePaymentData } from '@/services/firestoreService';
 import AITextImporter from '@/components/AITextImporter';
 import { calculateMonthlyInterestLogic } from '@/utils/interestCalculator';
 
@@ -32,24 +31,23 @@ import { calculateMonthlyInterestLogic } from '@/utils/interestCalculator';
 const PAYMENTS_COLLECTION = 'projects'; // Renamed from 'test' to 'projects'
 
 interface PaymentsCashFlowProps {
-  projectData: ProjectData;
-  updateProjectData: (updates: Partial<ProjectData>) => void;
-  updatePayments: (payments: Payment[]) => void;
   showOnlyCashFlow?: boolean;
   showOnlyAnalysis?: boolean;
-  projectId?: string;
 }
 
 const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
-  projectData,
-  updateProjectData,
-  updatePayments,
   showOnlyCashFlow = false,
-  showOnlyAnalysis = false,
-  projectId: propProjectId
+  showOnlyAnalysis = false
 }) => {
-  const { currentProjectId: contextProjectId } = useProject();
-  const projectId = contextProjectId || propProjectId;
+  const { 
+    currentProjectId: projectId,
+    projectData,
+    updateProjectData,
+    updatePayments,
+    addPayment,
+    updatePayment,
+    deletePayment
+  } = useProject();
   const [csvData, setCsvData] = useState('');
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -281,9 +279,54 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     return () => window.removeEventListener('refresh-projects', handleProjectRefresh);
   }, [projectId, updatePayments]);
 
-  // Fix the project end date initialization
-  const [projectEndDate, setProjectEndDate] = useState<Date>(() => {
-    // Default to last entry date + 12 months, or current date + 12 months if no entries
+  // Helper function to safely convert any date-like value to a proper Date object
+  const ensureValidDate = (dateValue: any): Date => {
+    if (!dateValue) return new Date();
+    
+    // If it's already a valid Date object
+    if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
+      return dateValue;
+    }
+    
+    // If it's a Firestore Timestamp object (has toDate method)
+    if (dateValue && typeof dateValue.toDate === 'function') {
+      try {
+        return dateValue.toDate();
+      } catch (error) {
+        console.warn('Failed to convert Firestore Timestamp:', error);
+      }
+    }
+    
+    // Try to parse as string or convert to Date
+    try {
+      const parsedDate = new Date(dateValue);
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate;
+      }
+    } catch (error) {
+      console.warn('Failed to parse date:', error);
+    }
+    
+    // Fallback to current date
+    return new Date();
+  };
+
+  // Use project end date from project data with proper validation
+  const projectEndDate = (() => {
+    // First try to use the stored projectEndDate if available
+    if (projectData.projectEndDate) {
+      try {
+        const validDate = ensureValidDate(projectData.projectEndDate);
+        // Check if it's a valid date (not NaN and reasonable range)
+        if (!isNaN(validDate.getTime()) && validDate.getFullYear() > 2020 && validDate.getFullYear() < 2100) {
+          return validDate;
+        }
+      } catch (error) {
+        console.warn('Failed to process stored projectEndDate:', error);
+      }
+    }
+    
+    // Default calculation if not set in project data or conversion failed
     if (!projectData.payments || projectData.payments.length === 0) {
       const defaultDate = new Date();
       defaultDate.setFullYear(defaultDate.getFullYear() + 1);
@@ -298,7 +341,12 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     const endDate = new Date(lastEntry);
     endDate.setFullYear(endDate.getFullYear() + 1); // Add 12 months
     return endDate;
-  });
+  })();
+
+  // Function to update project end date
+  const setProjectEndDate = (date: Date) => {
+    updateProjectData({ projectEndDate: date });
+  };
 
   useEffect(() => {
     const handleProjectRefresh = () => {
@@ -365,17 +413,12 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         projectEndDate
       });
       
-      // Update local state with new calculations
+      // Update local state with new calculations (memory-first approach)
       updatePayments(interestResult.allPaymentsWithInterest);
-
-      // Save the full array (including interest entries) to the database
-      if (projectId) {
-        savePayments(interestResult.allPaymentsWithInterest, projectId);
-      }
 
       toast({
         title: 'Interest Calculated', 
-        description: `Interest calculated up to ${projectEndDate instanceof Date && !isNaN(projectEndDate) ? projectEndDate.toLocaleDateString() : 'project end'} at ${interestRate}% annual rate.` 
+        description: `Interest calculated up to ${projectEndDate instanceof Date && !isNaN(projectEndDate) ? projectEndDate.toLocaleDateString() : 'project end'} at ${interestRate}% annual rate. Use "Save to Firebase" to persist changes.` 
       });
     } catch (error) {
       console.error('Error calculating interest:', error);
@@ -609,24 +652,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         return;
       }
 
-      // Update UI with new payments
+      // Update UI with new payments (memory-first approach)
       updatePayments([...projectData.payments, ...uniqueNewPayments]);
       
-      // Save to Firestore if we have a project ID
-      if (projectId) {
-        try {
-          await savePayments(uniqueNewPayments, projectId);
-          toast({ title: "Success", description: `Imported ${uniqueNewPayments.length} new entries and saved to the database.` });
-          
-          // Trigger refresh for other components
-          window.dispatchEvent(new CustomEvent('refresh-projects'));
-        } catch (firestoreError) {
-          console.error('Error saving to Firestore:', firestoreError);
-          toast({ title: "Import Warning", description: "Entries imported but failed to save to the database.", variant: "destructive" });
-        }
-      } else {
-        toast({ title: "Success", description: `Imported ${uniqueNewPayments.length} new entries. No project selected for saving.` });
-      }
+      toast({ title: "Success", description: `Imported ${uniqueNewPayments.length} new entries. Use "Save to Firebase" to persist changes.` });
       
       setCsvData('');
     } else if (errors.length === 0) {
@@ -663,25 +692,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       projectEndDate
     });
 
-    // Update local state with new calculations
+    // Update local state with new calculations (memory-first approach)
     updatePayments(interestResult.allPaymentsWithInterest);
 
-    // Log the payments array being saved
-    console.log('Saving payments to database:', interestResult.allPaymentsWithInterest);
-
-    // Save to Firestore if we have a project ID
-    if (projectId) {
-      try {
-        await savePayments(interestResult.allPaymentsWithInterest, projectId);
-        console.log('Save to Firestore successful');
-        toast({ description: "Entry updated and saved to the database." });
-      } catch (firestoreError) {
-        console.error('Error saving to Firestore:', firestoreError);
-        toast({ description: "Entry updated but failed to save to the database.", variant: "destructive" });
-      }
-    } else {
-      toast({ description: "Entry updated. No project selected for saving." });
-    }
+    toast({ description: "Entry updated. Use 'Save to Firebase' to persist changes." });
 
     cancelEdit();
   };
@@ -731,7 +745,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     // Generate a stable ID for the new payment
     paymentToAdd.id = generateStableId(paymentToAdd);
     
-    console.log('Adding new payment to project:', projectId, {
+    console.log('Adding new payment:', {
       ...paymentToAdd,
       date: dateObj.toISOString(),
       month: monthNumber,
@@ -739,43 +753,13 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     });
 
     try {
-      // Save to Firestore first if we have a project ID
-      if (projectId) {
-        try {
-          // This will save to the correct project and return the project ID
-          const savedProjectId = await saveSinglePayment(paymentToAdd, projectId);
-          console.log('Payment saved to project:', savedProjectId);
-          
-          // Update local state with the new payment
-          updatePayments([...projectData.payments, paymentToAdd]);
-          
-          toast({ 
-            title: "Success", 
-            description: `Entry added to project ${savedProjectId}.` 
-          });
-          
-          // Trigger refresh for other components
-          window.dispatchEvent(new CustomEvent('refresh-projects'));
-        } catch (firestoreError) {
-          console.error('Error saving to Firestore:', firestoreError);
-          // Still update local state even if Firestore save fails
-          updatePayments([...projectData.payments, paymentToAdd]);
-          
-          toast({ 
-            title: "Warning", 
-            description: "Entry added locally but failed to save to the database. Changes are local only.", 
-            variant: "destructive" 
-          });
-        }
-      } else {
-        // No project ID, just update local state
-        updatePayments([...projectData.payments, paymentToAdd]);
-        toast({ 
-          title: "Warning", 
-          description: "Entry added locally. No project selected - changes won't be saved to the database.",
-          variant: "default"
-        });
-      }
+      // Add to local state (memory-first approach)
+      updatePayments([...projectData.payments, paymentToAdd]);
+      
+      toast({ 
+        title: "Success", 
+        description: "Entry added. Use 'Save to Firebase' to persist changes." 
+      });
 
       // Reset form and close
       handleCancelNew();
@@ -800,7 +784,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     });
   };
 
-  const removePayment = async (id: string) => {
+  const removePayment = (id: string) => {
     if (id.startsWith('return_')) {
       const returnIndex = parseInt(id.split('_')[1], 10);
       if (!isNaN(returnIndex)) {
@@ -808,103 +792,28 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
         updateProjectData({ rentalIncome: updatedReturns });
       }
     } else {
-      // Update local state by removing the payment
-      updatePayments(projectData.payments.filter(payment => payment.id !== id));
+      // Use ProjectContext deletePayment method (memory-first approach)
+      deletePayment(id);
       
-      // Remove from Firestore if we have a project ID
-      if (projectId) {
-        try {
-          // Fetch the current entries
-          const { entries } = await fetchProject(projectId);
-          
-          // Filter out the payment with the matching ID
-          const updatedEntries = entries.filter(entry => entry.id !== id);
-          
-          // Process entries to ensure they all have stable IDs before saving
-          const processedEntries = updatedEntries.map(entry => ({
-            ...entry,
-            id: entry.id || generateStableId(entry)
-          }));
-          
-          // Save the updated entries back to Firestore, replacing the entire document
-          // This prevents the duplication issue
-          const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
-          const docSnap = await getDoc(docRef);
-          const existingData = docSnap.exists() ? docSnap.data() : {};
-          await setDoc(docRef, {
-            name: existingData.name || '',
-            ownerId: existingData.ownerId || '',
-            entries: processedEntries,
-            updatedAt: new Date(),
-            count: processedEntries.length,
-            projectId: projectId
-          });
-          
-          toast({ description: "Entry deleted from database." });
-        } catch (error) {
-          console.error(`Error removing payment ${id} from Firestore:`, error);
-          toast({ 
-            title: "Error", 
-            description: "Failed to delete entry from database. It was removed locally only.", 
-            variant: "destructive" 
-          });
-        }
-      }
+      toast({ description: "Entry deleted. Use 'Save to Firebase' to persist changes." });
     }
   };
 
-  const handleClearSession = async () => {
-    // Clear local state first
+  const handleClearSession = () => {
+    // Clear local state (memory-first approach)
     updatePayments([]);
     
-    // Clear from database if we have a project ID
-    if (projectId) {
-      try {
-        // Clear the entries array in Firestore
-      const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
-        const docSnap = await getDoc(docRef);
-        const existingData = docSnap.exists() ? docSnap.data() : {};
-        
-      await setDoc(docRef, {
-          name: existingData.name || '',
-          ownerId: existingData.ownerId || '',
-          ownerEmail: existingData.ownerEmail || '',
-          ownerName: existingData.ownerName || '',
-          entries: [], // Clear all entries
-        updatedAt: new Date(),
-          count: 0,
-        projectId: projectId
-      }, { merge: true });
-      
-      toast({ 
-          title: 'Project Cleared',
-          description: 'All entries have been removed from the current project and database.',
-          variant: 'default'
-      });
-      
-      // Trigger refresh for other components
-      window.dispatchEvent(new CustomEvent('refresh-projects'));
-    } catch (error) {
-        console.error('Error clearing project from database:', error);
-      toast({ 
-          title: 'Partially Cleared',
-          description: 'Entries removed locally but failed to clear from database.',
-        variant: 'destructive' 
-      });
-    }
-    } else {
     toast({
       title: 'Project Cleared',
-      description: 'All entries have been removed from the current project.',
+      description: 'All entries have been removed from the current project. Use "Save to Firebase" to persist changes.',
       variant: 'default'
     });
-    }
     
     setIsClearSessionDialogOpen(false);
   };
 
   // Toggle handlers for type changes
-  const handleTogglePaymentType = async (paymentId: string, currentType: string) => {
+  const handleTogglePaymentType = (paymentId: string, currentType: string) => {
     // Toggle between payment <-> drawdown
     const newType = currentType === 'payment' ? 'drawdown' : 'payment';
     
@@ -922,22 +831,13 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       projectEndDate
     });
     
-    // Update the payments with the new interest calculations
+    // Update the payments with the new interest calculations (memory-first approach)
     updatePayments(interestResult.allPaymentsWithInterest);
     
-    // Save to database if we have a project ID
-    if (projectId) {
-      try {
-        await savePayments(interestResult.allPaymentsWithInterest, projectId);
-        toast({ description: "Entry type updated and saved to the database." });
-      } catch (error) {
-        console.error('Error saving to Firestore:', error);
-        toast({ description: "Entry type updated but failed to save to the database.", variant: "destructive" });
-      }
-    }
+    toast({ description: "Entry type updated. Use 'Save to Firebase' to persist changes." });
   };
 
-  const handleToggleReturnType = async (paymentId: string, currentType: string) => {
+  const handleToggleReturnType = (paymentId: string, currentType: string) => {
     // Toggle between return <-> repayment
     const newType = currentType === 'return' ? 'repayment' : 'return';
     
@@ -955,19 +855,10 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
       projectEndDate
     });
     
-    // Update the payments with the new interest calculations
+    // Update the payments with the new interest calculations (memory-first approach)
     updatePayments(interestResult.allPaymentsWithInterest);
     
-    // Save to database if we have a project ID
-    if (projectId) {
-      try {
-        await savePayments(interestResult.allPaymentsWithInterest, projectId);
-        toast({ description: "Entry type updated and saved to the database." });
-      } catch (error) {
-        console.error('Error saving to Firestore:', error);
-        toast({ description: "Entry type updated but failed to save to the database.", variant: "destructive" });
-      }
-    }
+    toast({ description: "Entry type updated. Use 'Save to Firebase' to persist changes." });
   };
 
   // Return the JSX for the component
@@ -1033,8 +924,11 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             
             {/* Right: Secondary Actions */}
             <div className="flex items-center gap-2">
+              {/* Save Button (integrated) */}
+              <CompactSaveButton showLabel={false} className="h-9 w-9 p-0" />
+              
               {/* Import/Export Actions */}
-              <div className="flex items-center gap-1 pr-3 border-r border-gray-200">
+              <div className="flex items-center gap-1 px-3 border-x border-gray-200">
                 <Button 
                   onClick={handleExportCSV} 
                   variant="outline" 
@@ -1079,6 +973,9 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
             </div>
           </div>
         </div>
+        
+        {/* Inline Save/Discard Action Bar - only shows when needed */}
+        <SaveDiscardActionBar variant="inline" />
 
         {/* Full-Width Financial Summary */}
         {!showOnlyCashFlow && (
@@ -1110,6 +1007,7 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
           setNewPayment={setNewPayment}
           onSaveNew={handleSaveNew}
           onCancelNew={handleCancelNew}
+          onUpdatePayment={(payment) => updatePayments(projectData.payments.map(p => p.id === payment.id ? payment : p))}
         />
       </div>
 

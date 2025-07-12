@@ -1,24 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import PaymentsCashFlow from '@/components/PaymentsCashFlow';
 import { ProjectSidebar } from '@/components/ProjectSidebar';
-import { ProjectData, Payment } from '@/types/project';
-import { TrendingUp, BarChart3 } from 'lucide-react';
-import { fetchProject, createNewProject, deleteProject } from '@/services/firestoreService';
+import { SaveDiscardActionBar, ProjectTitleWithIndicator } from '@/components/SaveDiscardActionBar';
+import { TrendingUp } from 'lucide-react';
+import { createNewProject, deleteProject } from '@/services/firestoreService';
 import { ProjectNameDialog } from '@/components/ProjectNameDialog';
-import { useNavigate } from 'react-router-dom';
 import { useProject } from '@/contexts/ProjectContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigationGuard, useProjectSwitchGuard } from '@/hooks/useNavigationGuard';
 
 const Index = () => {
-  // ...existing state
+  // Authentication state
   const { user, loading, isAdmin, signInWithGoogle, signUpWithEmail, signInWithEmail, logout } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [authError, setAuthError] = useState<string | null>(null);
+
+  // Project context and navigation guards
+  const { currentProjectId, setCurrentProjectId, projectData, resetProject } = useProject();
+  const { toast } = useToast();
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  
+  // Navigation guards for unsaved changes
+  useNavigationGuard();
+  const { confirmProjectSwitch } = useProjectSwitchGuard();
 
   // Handle project deletion
   const handleDeleteProject = async (projectId: string) => {
@@ -26,21 +34,13 @@ const Index = () => {
     try {
       await deleteProject(projectId);
       toast({ title: 'Project Deleted', description: `Project ${projectId} deleted.` });
+      
       // If deleted project is current, clear selection
       if (currentProjectId === projectId) {
         setCurrentProjectId('');
-        setProjectData({
-          projectName: 'New Project',
-          annualInterestRate: 12,
-          purchasePrice: 0,
-          closingCosts: 0,
-          repairs: 0,
-          afterRepairValue: 0,
-          otherInitialCosts: 0,
-          payments: [],
-          rentalIncome: [],
-        });
+        resetProject();
       }
+      
       // Refresh sidebar
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('refresh-projects', { detail: 'refresh-projects' }));
@@ -52,95 +52,12 @@ const Index = () => {
     }
   };
 
-  const [projectData, setProjectData] = useState<ProjectData>({
-    projectName: 'New Project',
-    annualInterestRate: 12, // 12% annual interest rate
-    purchasePrice: 0,
-    closingCosts: 0,
-    repairs: 0,
-    afterRepairValue: 0,
-    otherInitialCosts: 0,
-    payments: [],
-    rentalIncome: [],
-  });
-
-  // Project management states
-  const { currentProjectId, setCurrentProjectId } = useProject();
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [sidebarVisible, setSidebarVisible] = useState<boolean>(true);
-  const { toast } = useToast();
-
-  // Load project data when currentProjectId changes
-  useEffect(() => {
-    const loadProject = async () => {
-      if (!currentProjectId) return;
-
-      setIsLoading(true);
-      try {
-        const { entries, projectId } = await fetchProject(currentProjectId);
-        if (entries && entries.length > 0) {
-          updatePayments(entries);
-
-          toast({
-            title: 'Project Loaded',
-            description: `Loaded ${entries.length} entries from project`,
-          });
-        } else {
-          toast({
-            title: 'Empty Project',
-            description: 'This project has no entries',
-          });
-        }
-      } catch (error) {
-        console.error('Error loading project:', error);
-        toast({
-          title: 'Error',
-          description: 'Failed to load project data',
-          variant: 'destructive',
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadProject();
-  }, [currentProjectId, toast]);
-
-  // Handle project selection from sidebar
-  const handleSelectProject = (projectId: string) => {
-    console.log(`Selecting project: ${projectId}`);
+  // Handle project selection from sidebar with navigation guard
+  const handleSelectProject = async (projectId: string) => {
+    console.log(`Attempting to select project: ${projectId}`);
     
-    // IMPORTANT: First set the current project ID to update the UI
-    setCurrentProjectId(projectId);
-    
-    // Then try to load cached data immediately to prevent flashing
-    const cachedData = localStorage.getItem(`project-data-${projectId}`);
-    if (cachedData) {
-      try {
-        const parsedData = JSON.parse(cachedData);
-        console.log(`Using cached data for project ${projectId}: ${parsedData.length} entries`);
-        
-        // Update project data with cached payments
-        setProjectData(prev => ({
-          ...prev,
-          payments: parsedData
-        }));
-      } catch (e) {
-        console.error('Error parsing cached project data:', e);
-      }
-    } else {
-      // If no cached data, ensure we start with an empty state
-      // This prevents stale data from previous projects
-      setProjectData(prev => ({
-        ...prev,
-        payments: []
-      }));
-    }
-    
-    // Then force a refresh to fetch latest data
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('refresh-projects', { detail: projectId }));
-    }, 100);
+    // Use navigation guard to check for unsaved changes
+    await confirmProjectSwitch(projectId, setCurrentProjectId);
   };
 
   // State for project name dialog
@@ -166,64 +83,21 @@ const Index = () => {
         user?.displayName || user?.email || ''
       );
       
-      // Mark this as a new project in localStorage
-      localStorage.setItem(`project-${projectId}-is-new`, 'true');
-      localStorage.setItem(`project-${projectId}-initialized`, 'true');
-      
       // Reset project data for new project
-      const newProjectData = {
-        projectName: name, // Use the project name as the default project name
-        annualInterestRate: 12,
-        purchasePrice: 0,
-        closingCosts: 0,
-        repairs: 0,
-        afterRepairValue: 0,
-        otherInitialCosts: 0,
-        payments: [],
-        rentalIncome: [],
-      };
+      resetProject({ projectName: name });
       
-      // Update the project data state
-      setProjectData(newProjectData);
-      
-      // Store initial empty state in localStorage
-      localStorage.setItem(`project-data-${projectId}`, JSON.stringify([]));
-      
-      // Set the current project ID immediately
+      // Set the current project ID
       setCurrentProjectId(projectId);
       
-      // Force refresh the ProjectSidebar component by fetching projects
-      const refreshProjects = async () => {
-        // Wait a moment for the new project to be created in the database
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
-        // Dispatch multiple events to ensure all components are refreshed
+      // Refresh the sidebar
+      setTimeout(() => {
         window.dispatchEvent(new CustomEvent('refresh-projects', { detail: 'force-refresh' }));
-        
-        // Some components might only listen to this specific event
-        const refreshEvent = new CustomEvent('refresh-projects', { 
-          detail: { projectId, action: 'new-project' } 
-        });
-        window.dispatchEvent(refreshEvent);
-        
-        // Try to refresh the project list in the sidebar specifically
-        const sidebarEvent = new CustomEvent('sidebar-refresh', { 
-          detail: { projectId } 
-        });
-        window.dispatchEvent(sidebarEvent);
-      };
-      
-      // Execute the refresh function
-      await refreshProjects();
+      }, 200);
       
       toast({
         title: 'New Project Created',
         description: `Created new project: ${name}`,
       });
-      
-      // Don't navigate, just update the current project ID which will trigger a refresh
-      // The project data will be loaded through the existing useEffect hook
-      setCurrentProjectId(projectId);
     } catch (error) {
       console.error('Error creating new project:', error);
       toast({
@@ -236,15 +110,7 @@ const Index = () => {
     }
   };
 
-  const updateProjectData = (updates: Partial<ProjectData>) => {
-    setProjectData(prev => ({ ...prev, ...updates }));
-  };
 
-  const updatePayments = (payments: Payment[]) => {
-    setProjectData(prev => ({ ...prev, payments }));
-  };
-
-  const navigate = useNavigate();
 
   // Authentication UI
   if (loading) {
@@ -378,19 +244,26 @@ const Index = () => {
         {/* Main Content */}
         <div className="flex-1 px-4 py-8 overflow-auto">
           <div className="space-y-6">
+            {/* Project Title with Unsaved Changes Indicator */}
+            {currentProjectId && (
+              <div className="flex items-center justify-between">
+                <ProjectTitleWithIndicator 
+                  title={projectData.projectName} 
+                  className="text-2xl font-bold text-gray-900"
+                />
+              </div>
+            )}
+            
             {/* Integrated Cash Flow and Analysis */}
             <Card className="shadow-sm border-gray-200">
               <CardContent className="p-0">
-                <PaymentsCashFlow 
-                  projectData={projectData}
-                  updateProjectData={updateProjectData}
-                  updatePayments={updatePayments}
-                  projectId={currentProjectId}
-                />
+                <PaymentsCashFlow />
               </CardContent>
             </Card>
           </div>
         </div>
+        
+        {/* Note: Save/Discard actions now integrated into PaymentsCashFlow component */}
       </div>
     </div>
   );

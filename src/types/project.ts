@@ -14,10 +14,15 @@ export interface Payment {
   description?: string | any; // Allow React nodes for formatted descriptions
   debtFunded?: boolean;
   date?: Date | string;
-  type?: 'payment' | 'return' | 'interest';
+  type?: 'payment' | 'return' | 'interest' | 'drawdown' | 'repayment';
   breakdown?: InterestBreakdownItem[];
   debtDrawdown?: boolean;
   applyToDebt?: boolean;
+  
+  // Enhanced loan tracking fields
+  loanAdjustment?: number; // Amount applied to loan principal
+  netReturn?: number; // Amount after loan adjustment (for IRR calculation)
+  isPartialLoanPayment?: boolean; // Flag to indicate this is a partial loan payment
 }
 
 export interface IncomeItem {
@@ -38,6 +43,7 @@ export interface ExpenseItem {
 export interface ProjectData {
   projectName: string;
   annualInterestRate: number; // Annual interest rate as a percentage (e.g., 12 for 12%)
+  projectEndDate?: Date; // Project end date for interest calculations
   purchasePrice: number;
   closingCosts: number;
   // Support both property naming conventions

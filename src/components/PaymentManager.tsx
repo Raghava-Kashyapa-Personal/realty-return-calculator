@@ -1,29 +1,30 @@
 import React, { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Payment, ProjectData } from '@/types/project';
+import { Payment } from '@/types/project';
 import { useToast } from '@/hooks/use-toast';
+import { useProject } from '@/contexts/ProjectContext';
 import { Plus, Upload, Copy, Calculator } from 'lucide-react';
 import { PaymentsTable } from '@/components/payments/PaymentsTable';
 import { exportToCsv } from '@/utils/csvExport';
-import { useInterestCalculator } from '@/hooks/useInterestCalculator';
-import { monthToDate, dateToMonth, monthToMonth, formatCurrency } from '@/components/payments/utils';
+import { monthToDate, dateToMonth, formatCurrency } from '@/components/payments/utils';
 
 interface PaymentManagerProps {
-  projectData: ProjectData;
-  updatePayments: (payments: Payment[]) => void;
-  interestRate: number;
   onCalculateInterest: () => void;
   allEntriesForTable: Payment[];
 }
 
 export const PaymentManager: React.FC<PaymentManagerProps> = ({
-  projectData,
-  updatePayments,
-  interestRate,
   onCalculateInterest,
   allEntriesForTable,
 }) => {
+  const { 
+    projectData, 
+    updatePayments, 
+    addPayment, 
+    updatePayment, 
+    deletePayment 
+  } = useProject();
   const [editingPayment, setEditingPayment] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<any>({});
   const [isAddingNew, setIsAddingNew] = useState(false);
@@ -56,21 +57,19 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
   const saveEdit = useCallback(() => {
     if (!editingPayment) return;
     
-    const updatedPayments = projectData.payments.map(payment => {
-      if (payment.id === editingPayment) {
-        return {
-          ...payment,
-          ...editValues,
-          amount: Number(editValues.amount),
-        };
-      }
-      return payment;
+    // Use ProjectContext updatePayment method (memory-first approach)
+    updatePayment(editingPayment, {
+      ...editValues,
+      amount: Number(editValues.amount),
     });
     
-    updatePayments(updatedPayments);
     setEditingPayment(null);
     setEditValues({});
-  }, [editingPayment, editValues, projectData.payments, updatePayments]);
+    
+    toast({
+      description: "Entry updated. Use 'Save to Firebase' to persist changes."
+    });
+  }, [editingPayment, editValues, updatePayment, toast]);
 
   // Handle canceling edit
   const cancelEdit = useCallback(() => {
@@ -80,8 +79,13 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
 
   // Handle removing payment
   const removePayment = useCallback((id: string) => {
-    updatePayments(projectData.payments.filter(payment => payment.id !== id));
-  }, [projectData.payments, updatePayments]);
+    // Use ProjectContext deletePayment method (memory-first approach)
+    deletePayment(id);
+    
+    toast({
+      description: "Entry deleted. Use 'Save to Firebase' to persist changes."
+    });
+  }, [deletePayment, toast]);
 
   // Handle saving new payment
   const handleSaveNew = useCallback(() => {
@@ -115,8 +119,8 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
     
     console.log('Created new payment:', payment);
 
-    // Update the payments in the parent component
-    updatePayments([...projectData.payments, payment]);
+    // Use ProjectContext addPayment method (memory-first approach)
+    addPayment(payment);
     
     // Reset the form
     setNewPayment({
@@ -133,9 +137,9 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
     // Show success message
     toast({
       title: `${paymentType === 'return' ? 'Return' : 'Payment'} Added`,
-      description: `New ${paymentType} entry has been added successfully. Click 'Calculate Interest' to update interest calculations.`,
+      description: `New ${paymentType} entry has been added. Use 'Save to Firebase' to persist changes.`,
     });
-  }, [newPayment, projectData.payments, updatePayments, toast, dateToMonth, monthToDate]);
+  }, [newPayment, addPayment, toast]);
 
   // Handle canceling new payment
   const handleCancelNew = useCallback(() => {
@@ -285,8 +289,8 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
 
       // Report results
       if (newPayments.length > 0) {
-        // Update payments without triggering analysis
-        updatePayments([...projectData.payments, ...newPayments]);
+        // Add payments using memory-first approach
+        newPayments.forEach(payment => addPayment(payment));
         setCsvData('');
         setIsImportOpen(false);
         
@@ -302,7 +306,7 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
         
         toast({
           title: 'Import Successful',
-          description: `Successfully imported ${newPayments.length} entries (${summary}). ${errors.length > 0 ? `${errors.length} line(s) had errors.` : ''} Click 'Calculate Interest' to update interest calculations.`,
+          description: `Successfully imported ${newPayments.length} entries (${summary}). ${errors.length > 0 ? `${errors.length} line(s) had errors.` : ''} Use 'Save to Firebase' to persist changes.`,
         });
         
         // Log errors if any
@@ -330,7 +334,7 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
         variant: 'destructive',
       });
     }
-  }, [csvData, projectData.payments, toast, updatePayments]);
+  }, [csvData, addPayment, toast]);
 
   // Handle CSV export
   const handleExportCSV = useCallback(async () => {
@@ -449,6 +453,7 @@ export const PaymentManager: React.FC<PaymentManagerProps> = ({
           setNewPayment={setNewPayment}
           onSaveNew={handleSaveNew}
           onCancelNew={handleCancelNew}
+          onUpdatePayment={(payment) => updatePayment(payment.id, payment)}
         />
       </div>
 

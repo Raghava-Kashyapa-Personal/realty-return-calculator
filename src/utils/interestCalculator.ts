@@ -71,7 +71,15 @@ export const calculateMonthlyInterestLogic = ({
     // Get principal at start of this month
     let monthStartPrincipal = currentPrincipal;
     
-    // Process payments in this month to update principal
+    // Calculate daily interest for this month
+    const monthInterest = calculateProRatedMonthlyInterest(
+      currentDate,
+      monthStartPrincipal,
+      monthPayments,
+      monthlyRate
+    );
+    
+    // Update principal for next month by processing all payments in this month
     for (const payment of monthPayments) {
       if (payment.type === 'drawdown') {
         // Drawdown increases principal
@@ -84,27 +92,18 @@ export const calculateMonthlyInterestLogic = ({
       }
       // Note: 'payment', 'return', and 'interest' types don't affect principal
     }
-
-    // Calculate interest only if there's positive principal at any point in the month
-    const maxPrincipal = Math.max(monthStartPrincipal, currentPrincipal);
-    let monthInterest = 0;
-    
-    if (maxPrincipal > 0) {
-      // Simple monthly interest calculation on the maximum principal during the month
-      monthInterest = maxPrincipal * monthlyRate;
-    }
     
     // Create interest payment if there's interest to charge
-    if (monthInterest > 0) {
+    if (monthInterest.totalInterest > 0) {
       const lastDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
       
       const interestPayment: Payment = {
         id: `interest-${currentDate.getFullYear()}-${currentDate.getMonth() + 1}`,
-        amount: monthInterest,
+        amount: monthInterest.totalInterest,
         type: 'interest',
         date: lastDayOfMonth,
         month: currentDate.getFullYear() * 12 + currentDate.getMonth(),
-        description: `Monthly Interest @ ${interestRate}% on principal of ₹${formatIndianCurrency(maxPrincipal)}`
+        description: monthInterest.description
       };
       
       newInterestPayments.push(interestPayment);
@@ -154,6 +153,100 @@ const createInterestDescription = (startPrincipal: number, payments: Payment[], 
   
   return `Monthly Interest @ 12% on principal of ₹${formatIndianCurrency(mainPrincipal)}`;
 };
+
+/**
+ * Calculate prorated interest for a month based on actual days outstanding
+ * @param monthStartDate First day of the month
+ * @param startingPrincipal Principal at the start of the month
+ * @param monthPayments Payments occurring in this month
+ * @param monthlyRate Monthly interest rate (decimal)
+ * @returns Object with total interest and description
+ */
+function calculateProRatedMonthlyInterest(
+  monthStartDate: Date,
+  startingPrincipal: number,
+  monthPayments: Payment[],
+  monthlyRate: number
+): { totalInterest: number; description: string } {
+  // Filter payments that affect principal
+  const principalAffectingPayments = monthPayments.filter(p => 
+    p.type === 'drawdown' || p.type === 'repayment'
+  );
+  
+  // If no payments affect principal, use simple monthly calculation
+  if (principalAffectingPayments.length === 0) {
+    const totalInterest = startingPrincipal * monthlyRate;
+    const description = `Monthly Interest @ ${(monthlyRate * 12 * 100).toFixed(1)}% on principal of ₹${formatIndianCurrency(startingPrincipal)}`;
+    return { totalInterest, description };
+  }
+  
+  // Get the last day of the month
+  const monthEndDate = new Date(monthStartDate.getFullYear(), monthStartDate.getMonth() + 1, 0);
+  const daysInMonth = monthEndDate.getDate();
+  
+  // Daily interest rate (monthly rate divided by actual days in month)
+  const dailyRate = monthlyRate / daysInMonth;
+  
+  // Sort payments by date within the month
+  const sortedMonthPayments = [...principalAffectingPayments].sort((a, b) => {
+    const dateA = a.date ? new Date(a.date) : new Date(monthStartDate.getFullYear(), monthStartDate.getMonth(), 15);
+    const dateB = b.date ? new Date(b.date) : new Date(monthStartDate.getFullYear(), monthStartDate.getMonth(), 15);
+    return dateA.getTime() - dateB.getTime();
+  });
+  
+  let currentPrincipal = startingPrincipal;
+  let totalInterest = 0;
+  let lastCalculatedDate = new Date(monthStartDate);
+  
+  // Process each payment in the month
+  for (const payment of sortedMonthPayments) {
+    const paymentDate = payment.date ? new Date(payment.date) : new Date(monthStartDate.getFullYear(), monthStartDate.getMonth(), 15);
+    
+    // Calculate interest from last calculated date to payment date
+    const daysElapsed = Math.max(0, Math.ceil((paymentDate.getTime() - lastCalculatedDate.getTime()) / (1000 * 60 * 60 * 24)));
+    
+    if (daysElapsed > 0 && currentPrincipal > 0) {
+      const periodInterest = currentPrincipal * dailyRate * daysElapsed;
+      totalInterest += periodInterest;
+    }
+    
+    // Update principal based on payment type
+    if (payment.type === 'drawdown') {
+      currentPrincipal += Math.abs(payment.amount);
+    } else if (payment.type === 'repayment') {
+      currentPrincipal -= Math.abs(payment.amount);
+      currentPrincipal = Math.max(0, currentPrincipal);
+    }
+    
+    lastCalculatedDate = new Date(paymentDate);
+  }
+  
+  // Calculate interest for remaining days in the month
+  const remainingDays = Math.max(0, Math.ceil((monthEndDate.getTime() - lastCalculatedDate.getTime()) / (1000 * 60 * 60 * 24)));
+  if (remainingDays > 0 && currentPrincipal > 0) {
+    const periodInterest = currentPrincipal * dailyRate * remainingDays;
+    totalInterest += periodInterest;
+  }
+  
+  // Create description based on the calculation
+  let description = '';
+  const monthName = monthStartDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  
+  // Find the payment that paid off the loan (if any)
+  const payoffPayment = sortedMonthPayments.find(p => 
+    p.type === 'repayment' && Math.abs(p.amount) >= startingPrincipal
+  );
+  
+  if (payoffPayment && startingPrincipal > 0) {
+    const payoffDate = payoffPayment.date ? new Date(payoffPayment.date) : new Date(monthStartDate.getFullYear(), monthStartDate.getMonth(), 15);
+    const daysOutstanding = Math.ceil((payoffDate.getTime() - monthStartDate.getTime()) / (1000 * 60 * 60 * 24)) + 1; // Include the payoff day
+    description = `Prorated Interest @ ${(monthlyRate * 12 * 100).toFixed(1)}% on ₹${formatIndianCurrency(startingPrincipal)} for ${daysOutstanding} days in ${monthName}`;
+  } else {
+    description = `Prorated Interest @ ${(monthlyRate * 12 * 100).toFixed(1)}% for ${monthName} (calculated daily)`;
+  }
+  
+  return { totalInterest, description };
+}
 
 // Helper function to format currency in Indian format
 const formatIndianCurrency = (amount: number): string => {

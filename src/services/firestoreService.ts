@@ -584,3 +584,158 @@ const sanitizeData = (obj: any): any => {
 
 export const deleteProjectData = deleteProject;
 export const updateProjectData = updateProjectName;
+
+/**
+ * Saves project data and payments in a single batch operation
+ * @param projectData The project data to save
+ * @param payments The payments to save
+ * @param projectId The project ID
+ * @returns Promise that resolves when the batch is committed
+ */
+export const saveBatch = async (projectData: ProjectData, payments: Payment[], projectId: string): Promise<void> => {
+  try {
+    console.log(`Batch saving project ${projectId} with ${payments.length} payments`);
+    
+    // Save project metadata (if different from payments)
+    await saveProjectData(projectData, projectId);
+    
+    // Save payments
+    await savePayments(payments, projectId);
+    
+    console.log(`Batch save completed for project ${projectId}`);
+  } catch (error) {
+    console.error('Error in batch save:', error);
+    throw error;
+  }
+};
+
+/**
+ * Checks if a project has been modified since the given timestamp
+ * @param projectId The project ID to check
+ * @param lastKnownUpdate The last known update timestamp
+ * @returns Object with conflict status and latest data
+ */
+export const checkForConflicts = async (projectId: string, lastKnownUpdate: Date): Promise<{
+  hasConflict: boolean;
+  latestData?: { entries: Payment[], updatedAt: Date };
+}> => {
+  try {
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
+    const docSnap = await getDoc(docRef);
+    
+    if (!docSnap.exists()) {
+      return { hasConflict: false };
+    }
+    
+    const data = docSnap.data();
+    const serverUpdatedAt = data.updatedAt?.toDate() || new Date(0);
+    
+    // Check if server version is newer than our last known update
+    const hasConflict = serverUpdatedAt > lastKnownUpdate;
+    
+    if (hasConflict) {
+      // Convert entries back to Payment objects
+      const entries = (data.entries || []).map((entry: any) => {
+        let date = entry.date;
+        if (date && typeof date.toDate === 'function') {
+          date = date.toDate();
+        }
+        
+        return {
+          ...entry,
+          date,
+          id: entry.id || `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        };
+      });
+      
+      return {
+        hasConflict: true,
+        latestData: {
+          entries,
+          updatedAt: serverUpdatedAt
+        }
+      };
+    }
+    
+    return { hasConflict: false };
+  } catch (error) {
+    console.error('Error checking for conflicts:', error);
+    return { hasConflict: false };
+  }
+};
+
+/**
+ * Optimistic update with rollback capability
+ * @param projectId The project ID
+ * @param updateFn Function that performs the update
+ * @param rollbackData Data to restore if update fails
+ * @returns Success status and any error
+ */
+export const optimisticUpdate = async <T>(
+  projectId: string,
+  updateFn: () => Promise<T>,
+  rollbackData: { projectData: ProjectData; payments: Payment[] }
+): Promise<{ success: boolean; result?: T; error?: Error }> => {
+  try {
+    // Check for conflicts before applying update
+    const lastSavedAt = new Date(); // This should come from ProjectContext
+    const conflictCheck = await checkForConflicts(projectId, lastSavedAt);
+    
+    if (conflictCheck.hasConflict) {
+      throw new Error('Project has been modified by another user. Please refresh to see the latest changes.');
+    }
+    
+    // Perform the update
+    const result = await updateFn();
+    
+    return { success: true, result };
+  } catch (error) {
+    console.error('Optimistic update failed, attempting rollback:', error);
+    
+    try {
+      // Attempt to restore previous state
+      await saveBatch(rollbackData.projectData, rollbackData.payments, projectId);
+      console.log('Rollback completed successfully');
+    } catch (rollbackError) {
+      console.error('Rollback failed:', rollbackError);
+    }
+    
+    return { 
+      success: false, 
+      error: error instanceof Error ? error : new Error(String(error))
+    };
+  }
+};
+
+/**
+ * Bulk operation for multiple projects
+ * @param operations Array of operations to perform
+ * @returns Results of all operations
+ */
+export const bulkOperations = async (operations: Array<{
+  type: 'save' | 'delete';
+  projectId: string;
+  data?: { projectData: ProjectData; payments: Payment[] };
+}>): Promise<Array<{ projectId: string; success: boolean; error?: string }>> => {
+  const results = [];
+  
+  for (const operation of operations) {
+    try {
+      if (operation.type === 'save' && operation.data) {
+        await saveBatch(operation.data.projectData, operation.data.payments, operation.projectId);
+        results.push({ projectId: operation.projectId, success: true });
+      } else if (operation.type === 'delete') {
+        await deleteProject(operation.projectId);
+        results.push({ projectId: operation.projectId, success: true });
+      }
+    } catch (error) {
+      results.push({ 
+        projectId: operation.projectId, 
+        success: false, 
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+  
+  return results;
+};

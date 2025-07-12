@@ -6,8 +6,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { EnhancedCalendar } from '@/components/ui/enhanced-calendar';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Payment } from '@/types/project';
-type PaymentType = 'payment' | 'return' | 'interest';
-import { Trash2, CalendarIcon, Pencil, Check, X, Plus } from 'lucide-react';
+import { processPaymentsWithLoanTracking, ProcessedPayment } from '@/utils/loanTracker';
+import { PartialPaymentBreakdown, PartialPaymentIndicator, LoanBalanceDisplay } from './PartialPaymentBreakdown';
+import { LoanAdjustmentDialog } from './LoanAdjustmentDialog';
+type PaymentType = 'payment' | 'return' | 'interest' | 'drawdown' | 'repayment';
+import { Trash2, CalendarIcon, Pencil, Check, X, Plus, Settings } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface PaymentsTableProps {
@@ -30,6 +33,7 @@ interface PaymentsTableProps {
   onCancelNew?: () => void;
   onTogglePaymentType?: (id: string, currentType: string) => void;
   onToggleReturnType?: (id: string, currentType: string) => void;
+  onUpdatePayment?: (payment: Payment) => void;
 }
 
 export const PaymentsTable: React.FC<PaymentsTableProps> = ({
@@ -51,8 +55,13 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
   onSaveNew = () => {},
   onCancelNew = () => {},
   onTogglePaymentType,
-  onToggleReturnType
+  onToggleReturnType,
+  onUpdatePayment
 }) => {
+  const [loanAdjustmentDialog, setLoanAdjustmentDialog] = React.useState<{
+    open: boolean;
+    payment: Payment | null;
+  }>({ open: false, payment: null });
   // Local implementations that can be overridden by props
   const monthToDate = (month: number) => {
     if (propMonthToDate) return propMonthToDate(month);
@@ -76,40 +85,8 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
     }
   };
 
-  // Calculate running balance for each payment
-  const calculateRunningBalances = () => {
-    if (!payments.length) return [];
-    
-    const sortedPayments = [...payments].sort((a, b) => {
-      const dateA = a.date ? new Date(a.date).getTime() : monthToDate(a.month).getTime();
-      const dateB = b.date ? new Date(b.date).getTime() : monthToDate(b.month).getTime();
-      if (dateA === dateB) {
-        // If dates are the same, prioritize based on type
-        const typeOrder: Record<string, number> = { payment: 1, interest: 2, return: 3 };
-        return (typeOrder[a.type as string] || 0) - (typeOrder[b.type as string] || 0);
-      }
-      return dateA - dateB;
-    });
-
-    let runningBalance = 0;
-    return sortedPayments.map(payment => {
-      // Simple type-based logic - no flags needed
-      if (payment.type === 'drawdown') {
-        // Drawdown increases the debt principal
-        runningBalance += Math.abs(payment.amount);
-      } else if (payment.type === 'repayment') {
-        // Repayment reduces the debt principal
-        runningBalance -= Math.abs(payment.amount);
-        // Ensure principal doesn't go negative (surplus/overpayment)
-        runningBalance = Math.max(0, runningBalance);
-      }
-      // Note: 'payment', 'return', and 'interest' types don't affect principal balance
-      
-      return { ...payment, balance: runningBalance };
-    });
-  };
-
-  const paymentsWithBalance = calculateRunningBalances();
+  // Process payments with loan tracking
+  const paymentsWithBalance = processPaymentsWithLoanTracking(payments, true);
   const totalPayments = payments.reduce((sum, p) => sum + (p.type === 'return' ? p.amount : -p.amount), 0);
   const netCashFlow = payments.reduce((sum, p) => {
     if (p.type === 'return') {
@@ -231,12 +208,32 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                       autoFocus
                     />
                   ) : (
-                    <span className={`text-sm ${(payment.type as PaymentType) === 'return' ? 'text-green-600' : (payment.type as PaymentType) === 'interest' ? 'text-purple-600' : 'text-red-600'}`}>
-                      {/* Show + for returns, - for payments and interest */}
-                      {(payment.type as PaymentType) === 'return' ? '+' : '-'}
-                      {/* Show absolute value of amount */}
-                      {Math.abs(payment.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className={`text-sm ${
+                        ['return', 'repayment'].includes(payment.type as string) ? 'text-green-600' : 
+                        (payment.type as PaymentType) === 'interest' ? 'text-purple-600' : 
+                        'text-red-600'
+                      }`}>
+                        {/* Show + for returns and repayments, - for payments and interest */}
+                        {['return', 'repayment'].includes(payment.type as string) ? '+' : '-'}
+                        {/* Show absolute value of amount */}
+                        {Math.abs(payment.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      
+                      {/* Show partial payment indicator */}
+                      <PartialPaymentIndicator payment={payment as ProcessedPayment} />
+                      
+                      {/* Show breakdown for returns/repayments */}
+                      {['return', 'repayment'].includes(payment.type as string) && 
+                       ((payment as ProcessedPayment).calculatedLoanAdjustment || 0) > 0 && (
+                        <div className="text-xs text-gray-500">
+                          <div>Loan: ₹{((payment as ProcessedPayment).calculatedLoanAdjustment || 0).toLocaleString()}</div>
+                          {((payment as ProcessedPayment).calculatedNetReturn || 0) > 0 && (
+                            <div>Return: ₹{((payment as ProcessedPayment).calculatedNetReturn || 0).toLocaleString()}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </TableCell>
                 <TableCell className="p-1 text-center">
@@ -276,9 +273,10 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                   )}
                 </TableCell>
                 <TableCell className="p-1 text-center">
-                  <span className={payment.balance > 0 ? 'text-red-600' : 'text-green-600'}>
-                    {payment.balance > 0 ? '-' : ''}{formatCurrency(Math.abs(payment.balance))}
-                  </span>
+                  <LoanBalanceDisplay 
+                    balance={(payment as ProcessedPayment).runningLoanBalance || 0}
+                    formatCurrency={formatCurrency}
+                  />
                 </TableCell>
                 <TableCell className="p-1 text-center w-24">
                   {editingPayment === payment.id ? (
@@ -349,6 +347,19 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
                           title={payment.type === 'repayment' ? "Convert to Regular Return" : "Convert to Debt Repayment"}
                         >
                           💰
+                        </Button>
+                      )}
+                      
+                      {/* Loan Adjustment button for returns and repayments */}
+                      {(payment.type === 'return' || payment.type === 'repayment') && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setLoanAdjustmentDialog({ open: true, payment })}
+                          className="h-7 w-7 p-0 bg-purple-50 text-purple-600 hover:bg-purple-100"
+                          title="Adjust Loan vs Return Allocation"
+                        >
+                          <Settings className="w-3.5 h-3.5" />
                         </Button>
                       )}
                       
@@ -479,6 +490,21 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
           </TableBody>
         </Table>
       </div>
+      
+      {/* Loan Adjustment Dialog */}
+      {loanAdjustmentDialog.payment && (
+        <LoanAdjustmentDialog
+          open={loanAdjustmentDialog.open}
+          onOpenChange={(open) => setLoanAdjustmentDialog({ open, payment: null })}
+          payment={loanAdjustmentDialog.payment}
+          allPayments={payments}
+          onSave={(updatedPayment) => {
+            if (onUpdatePayment) {
+              onUpdatePayment(updatedPayment);
+            }
+          }}
+        />
+      )}
     </div>
   );
 };

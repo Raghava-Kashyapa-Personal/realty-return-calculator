@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp, BarChart2, Landmark, Scale, Percent, HandCoins, CalendarDays } from 'lucide-react';
 import { format as formatDateFns, differenceInDays } from 'date-fns';
 import { monthToDate } from '@/components/payments/utils';
+import { processPaymentsWithLoanTracking, getIRRCashFlows } from '@/utils/loanTracker';
 import xirr from 'xirr';
 
 interface CashFlowAnalysisProps {
@@ -19,26 +20,26 @@ interface CashFlowItem extends Omit<Payment, 'id' | 'type'> {
   id?: string;
 }
 
-const calculateXIRR = (allCashFlows: CashFlowItem[]): number => {
+const calculateXIRR = (cashFlowsWithDates: Array<{date: Date, amount: number}>): number => {
   try {
-    if (allCashFlows.length < 2) return 0;
+    if (cashFlowsWithDates.length < 2) return 0;
 
-    console.log('Calculating XIRR with cash flows:', allCashFlows);
+    console.log('Calculating XIRR with cash flows:', cashFlowsWithDates);
     
-    // Properly format transactions for the xirr library
-    const transactions = allCashFlows.map(cf => {
-      const date = 'date' in cf && cf.date ? new Date(cf.date) : monthToDate(cf.month);
-      let amount;
-      if (cf.type === 'payment' || cf.type === 'interest') {
-        amount = -Math.abs(cf.amount);
-      } else if (cf.type === 'return' || cf.type === 'rental' || cf.type === 'sale') {
-        amount = Math.abs(cf.amount);
-      } else {
-        // Default case
-        amount = cf.amount;
-      }
-      return { amount, when: date };
-    });
+    // Check if we have at least one positive and one negative cash flow
+    const hasPositive = cashFlowsWithDates.some(cf => cf.amount > 0);
+    const hasNegative = cashFlowsWithDates.some(cf => cf.amount < 0);
+    
+    if (!hasPositive || !hasNegative) {
+      console.warn('XIRR calculation requires both positive and negative cash flows');
+      return 0;
+    }
+    
+    // Format transactions for the xirr library
+    const transactions = cashFlowsWithDates.map(cf => ({
+      amount: cf.amount,
+      when: cf.date
+    }));
 
     console.log('XIRR transactions:', transactions);
     
@@ -91,12 +92,12 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
       rental: projectDataInput.rentalIncome?.length || 0
     });
 
-    // Total payments (only principal, not interest)
+    // Total payments (only actual investor money, excluding borrowed funds)
     let totalPayments = 0;
     paymentsData.forEach(p => {
-      if (p.type === 'payment') {
-        console.log('Found payment:', p.amount);
-        totalPayments += p.amount;
+      if (p.type === 'payment') {  // Only count actual payments, not drawdowns (borrowed money)
+        console.log('Found payment (investor money):', p.amount, 'type:', p.type);
+        totalPayments += Math.abs(p.amount);
       }
     });
 
@@ -109,8 +110,9 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
       }
     });
 
-    // Total returns
+    // Total returns (only net returns, excluding loan repayments)
     let totalReturns = 0;
+    const paymentsForReturns = processPaymentsWithLoanTracking(paymentsData, true);
     
     // Add rental income
     projectDataInput.rentalIncome?.forEach(ri => {
@@ -118,15 +120,19 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
       totalReturns += ri.amount;
     });
     
-    // Add return payments
-    paymentsData.forEach(p => {
-      if (p.type === 'return') {
-        console.log('Found return:', p.amount);
-        totalReturns += p.amount;
+    // Add net returns from processed payments (excluding loan repayment portions)
+    paymentsForReturns.forEach(p => {
+      if (p.type === 'return' || p.type === 'repayment') {
+        const netReturn = p.calculatedNetReturn || 0;
+        if (netReturn > 0) {
+          console.log('Found net return:', netReturn, 'from total:', p.amount);
+          totalReturns += netReturn;
+        }
       }
     });
 
-    // Calculate total investment (payments + interest paid)
+    // Calculate total investment (only investor's cash from pocket: payments + interest paid)
+    // Note: Excludes drawdowns as they are borrowed money, not investor money
     const totalInvestment = Math.abs(totalPayments) + totalInterestPaid;
 
     
@@ -141,42 +147,22 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
       netProfit
     });
     
-    // Calculate XIRR with all cash flows
-    let outstandingPrincipal = 0;
-    const allCashFlows: CashFlowItem[] = [
-      // Payments: exclude debt drawdowns from IRR
-      ...paymentsData
-        .filter(p => !(p.type === 'payment' && p.debtDrawdown))
-        .map(p => ({
-          ...p,
-          type: p.type || 'payment' as const
-        })),
-      // Returns: handle applyToDebt logic
-      ...paymentsData
-        .filter(p => p.type === 'return' && p.applyToDebt)
-        .flatMap(p => {
-          // Calculate principal remaining before this repayment
-          // (We need to reconstruct the principal balance up to this point)
-          // For simplicity, assume payments are sorted chronologically
-          // We'll do a simple running total here
-          // (In a more robust system, this should be calculated outside the map)
-          let repayment = p.amount;
-          let principalToApply = Math.min(repayment, outstandingPrincipal);
-          let excess = repayment - principalToApply;
-          // Update outstanding principal
-          outstandingPrincipal = Math.max(0, outstandingPrincipal - principalToApply);
-          // Only include the excess as a positive cash flow
-          return excess > 0 ? [{ ...p, amount: excess, type: 'return' as const }] : [];
-        }),
-      // Add rental income with proper typing
+    // Calculate XIRR using proper loan tracking
+    const processedPayments = processPaymentsWithLoanTracking(paymentsData, true);
+    const irrCashFlows = getIRRCashFlows(processedPayments);
+    
+    // Add rental income to IRR calculation
+    const allIRRCashFlows = [
+      ...irrCashFlows,
       ...(projectDataInput.rentalIncome?.map(ri => ({
-        ...ri,
-        type: ri.type as 'rental',
-        id: ri.id || `rental-${ri.month}-${ri.amount}`
+        date: ri.date ? new Date(ri.date) : monthToDate(ri.month),
+        amount: ri.amount // Rental income is positive cash flow
       })) || [])
     ];
     
-    const xirrValue = calculateXIRR(allCashFlows);
+    console.log('All IRR cash flows for XIRR calculation:', allIRRCashFlows);
+    
+    const xirrValue = calculateXIRR(allIRRCashFlows);
 
     const result = { 
       totalInvestment, 
@@ -229,8 +215,26 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
     return <p>No project data available for analysis.</p>;
   }
 
-  // Format project end date
-  const formattedEndDate = projectEndDate ? formatDateFns(projectEndDate, 'MMM yyyy') : 'Not set';
+  // Format project end date with safety check
+  const formattedEndDate = (() => {
+    if (!projectEndDate) return 'Not set';
+    
+    try {
+      // Ensure it's a valid Date object
+      const date = projectEndDate instanceof Date ? projectEndDate : new Date(projectEndDate);
+      
+      // Check if the date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid project end date:', projectEndDate);
+        return 'Invalid date';
+      }
+      
+      return formatDateFns(date, 'MMM yyyy');
+    } catch (error) {
+      console.warn('Error formatting project end date:', error);
+      return 'Invalid date';
+    }
+  })();
 
   return (
     <div className="space-y-3 p-3 bg-white rounded-lg border border-gray-200">
@@ -248,7 +252,7 @@ export const CashFlowAnalysis: React.FC<CashFlowAnalysisProps> = ({
           title="Total Investment"
           value={formatCurrency(analysisData.totalInvestment, true)}
           icon={<Landmark className="h-4 w-4 text-blue-500" />}
-          description="Principal + Interest"
+          description="Cash from pocket only"
         />
         <MetricCard 
           title="Total Returns"
