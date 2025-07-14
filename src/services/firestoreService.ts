@@ -568,10 +568,18 @@ const sanitizeData = (obj: any): any => {
     return obj.map(item => sanitizeData(item));
   }
   
+  // Handle Date objects specifically - convert to Firestore Timestamp
+  if (obj instanceof Date) {
+    return Timestamp.fromDate(obj);
+  }
+  
   const sanitized: any = {};
   Object.keys(obj).forEach(key => {
     if (obj[key] !== undefined) {
-      if (typeof obj[key] === 'object' && obj[key] !== null) {
+      if (obj[key] instanceof Date) {
+        // Convert Date objects to Firestore Timestamps
+        sanitized[key] = Timestamp.fromDate(obj[key]);
+      } else if (typeof obj[key] === 'object' && obj[key] !== null) {
         sanitized[key] = sanitizeData(obj[key]);
       } else {
         sanitized[key] = obj[key];

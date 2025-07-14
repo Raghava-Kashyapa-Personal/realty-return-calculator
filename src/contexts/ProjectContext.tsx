@@ -236,16 +236,58 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       let projectMetadata: ProjectData | null = null;
       try {
         projectMetadata = await fetchProjectData(projectId);
+        console.log('Loaded project metadata:', projectMetadata);
       } catch (error) {
-        console.log('No project metadata found, using defaults');
+        console.warn('No project metadata found, using defaults. Error:', error);
+        
+        // If metadata doesn't exist, create it with current defaults
+        try {
+          const initialMetadata: ProjectData = {
+            ...defaultProjectData,
+            payments: [], // Will be overridden
+          };
+          await saveProjectData(initialMetadata, projectId);
+          projectMetadata = initialMetadata;
+          console.log('Created initial project metadata for project:', projectId);
+        } catch (saveError) {
+          console.error('Failed to create initial project metadata:', saveError);
+        }
       }
       
-      // Combine metadata with entries
+      // Combine metadata with entries - ensure project-specific settings are preserved
       const loadedProjectData: ProjectData = {
-        ...defaultProjectData,
-        ...projectMetadata,
-        payments: entries || [],
+        ...defaultProjectData,  // Start with defaults
+        ...projectMetadata,     // Override with saved project settings
+        payments: entries || [], // Always use entries from payments collection
       };
+      
+      // Ensure we have valid dates
+      if (loadedProjectData.projectEndDate) {
+        try {
+          // Handle Firestore Timestamp conversion
+          const dateValue = loadedProjectData.projectEndDate as any;
+          if (dateValue && typeof dateValue.toDate === 'function') {
+            loadedProjectData.projectEndDate = dateValue.toDate();
+          } else if (typeof dateValue === 'string') {
+            loadedProjectData.projectEndDate = new Date(dateValue);
+          } else if (!(dateValue instanceof Date)) {
+            // If it's not already a Date, try to convert it
+            loadedProjectData.projectEndDate = new Date(dateValue);
+          }
+          
+          // Validate the final date
+          if (isNaN(loadedProjectData.projectEndDate.getTime())) {
+            throw new Error('Invalid date after conversion');
+          }
+        } catch (dateError) {
+          console.warn('Failed to convert project end date, using default:', dateError);
+          loadedProjectData.projectEndDate = (() => {
+            const defaultDate = new Date();
+            defaultDate.setFullYear(defaultDate.getFullYear() + 1);
+            return defaultDate;
+          })();
+        }
+      }
       
       setProjectData(loadedProjectData);
       setOriginalProjectData({ ...loadedProjectData });

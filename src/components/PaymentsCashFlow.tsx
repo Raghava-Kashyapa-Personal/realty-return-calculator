@@ -77,6 +77,11 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
     setCurrentInterestDetails(null);
   }, [projectData.payments, projectData.rentalIncome, interestRate]);
 
+  // Sync local interestRate state with project data when switching projects
+  useEffect(() => {
+    setInterestRate(projectData.annualInterestRate || 12);
+  }, [projectData.annualInterestRate]);
+
   // Manual fetch function (used by Load from DB button)
   const fetchDataFromFirestoreManual = async () => {
     setIsFetching(true);
