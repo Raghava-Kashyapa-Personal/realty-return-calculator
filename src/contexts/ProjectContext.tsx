@@ -229,8 +229,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     changeTrackingRef.current = false; // Disable change tracking during load
     
     try {
-      // First try to load from the payments collection (entries)
-      const { entries } = await fetchProject(projectId);
+      // First try to load from the payments collection (entries + project name)
+      const { entries, projectName: actualProjectName } = await fetchProject(projectId);
       
       // Then try to load project metadata
       let projectMetadata: ProjectData | null = null;
@@ -244,6 +244,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         try {
           const initialMetadata: ProjectData = {
             ...defaultProjectData,
+            projectName: actualProjectName || 'New Project', // Use the actual project name
             payments: [], // Will be overridden
           };
           await saveProjectData(initialMetadata, projectId);
@@ -258,6 +259,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       const loadedProjectData: ProjectData = {
         ...defaultProjectData,  // Start with defaults
         ...projectMetadata,     // Override with saved project settings
+        projectName: actualProjectName || projectMetadata?.projectName || 'New Project', // Use the actual project name from projects collection
         payments: entries || [], // Always use entries from payments collection
       };
       

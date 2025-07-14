@@ -870,23 +870,23 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
   return (
     <div className="space-y-4">
       <div className="space-y-4">
-        {/* Integrated Header with Project Controls and Actions */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
-            {/* Left: Project Settings */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+        {/* Improved Two-Row Navigation Layout */}
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+          {/* Row 1: Project Configuration */}
+          <div className="flex items-center justify-between p-4 border-b border-gray-100">
+            <div className="flex items-center gap-6">
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Project End:</label>
+                <label className="text-sm font-medium text-gray-700 min-w-0">Project End:</label>
                 <input
                   type="date"
                   value={projectEndDate instanceof Date && !isNaN(projectEndDate) ? projectEndDate.toISOString().split('T')[0] : ''}
                   onChange={(e) => setProjectEndDate(new Date(e.target.value))}
-                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-36"
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-36"
                 />
               </div>
               
               <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Interest Rate:</label>
+                <label className="text-sm font-medium text-gray-700 min-w-0">Interest Rate:</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
@@ -896,72 +896,84 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
                       setInterestRate(newRate);
                       updateProjectData({ annualInterestRate: newRate });
                     }}
-                    className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-20"
+                    className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-20"
                     min="0"
                     max="100"
                     step="0.1"
                   />
-                  <span className="text-sm text-gray-600">% annual</span>
+                  <span className="text-sm text-gray-600 min-w-0">% annual</span>
                 </div>
               </div>
             </div>
             
-            {/* Center: Primary Actions */}
+            {/* Save Status Indicator */}
+            <div className="flex items-center gap-3">
+              <CompactSaveButton showLabel={true} className="h-8" />
+            </div>
+          </div>
+          
+          {/* Row 2: Action Controls */}
+          <div className="flex items-center justify-between p-4">
+            {/* Primary Actions */}
             <div className="flex items-center gap-3">
               <Button 
                 onClick={() => setIsAddingNew(true)} 
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 h-9"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 h-9 font-medium shadow-sm"
                 title="Add New Entry"
               >
                 <Plus className="w-4 h-4 mr-2" />
-                <span className="text-sm">Add Entry</span>
+                Add Entry
               </Button>
               
               <Button 
                 onClick={handleCalculateInterest} 
-                className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 h-9"
+                className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 h-9 font-medium shadow-sm"
                 title="Calculate Interest"
               >
                 <Calculator className="w-4 h-4 mr-2" />
-                <span className="text-sm">Calculate</span>
+                Calculate
               </Button>
             </div>
             
-            {/* Right: Secondary Actions */}
-            <div className="flex items-center gap-2">
-              {/* Save Button (integrated) */}
-              <CompactSaveButton showLabel={false} className="h-9 w-9 p-0" />
-              
-              {/* Import/Export Actions */}
-              <div className="flex items-center gap-1 px-3 border-x border-gray-200">
+            {/* Secondary Actions */}
+            <div className="flex items-center gap-4">
+              {/* Import/Export Group */}
+              <div className="flex items-center gap-1 px-3 py-1 bg-gray-50 rounded-md border border-gray-200">
                 <Button 
                   onClick={handleExportCSV} 
-                  variant="outline" 
+                  variant="ghost" 
                   size="sm"
-                  className="h-9 w-9 p-0"
+                  className="h-8 px-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
                   title="Export to CSV"
                 >
-                  <Download className="w-4 h-4" />
+                  <Download className="w-4 h-4 mr-1" />
+                  <span className="text-xs">Export</span>
                 </Button>
+                
+                <div className="w-px h-4 bg-gray-300"></div>
                 
                 <Button 
                   onClick={() => setIsImportOpen(true)} 
-                  variant="outline" 
+                  variant="ghost" 
                   size="sm"
-                  className="h-9 w-9 p-0"
+                  className="h-8 px-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
                   title="Import CSV"
                 >
-                  <Upload className="w-4 h-4" />
+                  <Upload className="w-4 h-4 mr-1" />
+                  <span className="text-xs">CSV</span>
                 </Button>
+                
+                <div className="w-px h-4 bg-gray-300"></div>
                 
                 <Button 
                   onClick={() => setIsAIImportOpen(true)} 
-                  variant="outline" 
+                  variant="ghost" 
                   size="sm"
-                  className="h-9 w-9 p-0"
+                  className="h-8 px-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
                   title="AI Import"
                 >
-                  <Wand2 className="w-4 h-4" />
+                  <Wand2 className="w-4 h-4 mr-1" />
+                  <span className="text-xs">AI</span>
                 </Button>
               </div>
 
@@ -970,10 +982,11 @@ const PaymentsCashFlow: React.FC<PaymentsCashFlowProps> = ({
                 onClick={() => setIsClearSessionDialogOpen(true)} 
                 variant="outline" 
                 size="sm"
-                className="h-9 w-9 p-0 text-red-600 border-red-300 hover:bg-red-50"
+                className="h-8 px-3 text-red-600 border-red-300 hover:bg-red-50 hover:border-red-400"
                 title="Clear Project"
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash2 className="w-4 h-4 mr-1" />
+                <span className="text-xs">Clear</span>
               </Button>
             </div>
           </div>

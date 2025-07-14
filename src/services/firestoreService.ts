@@ -332,9 +332,9 @@ export const fetchAllEntries = async (limitCount: number = 20): Promise<{ entrie
 /**
  * Fetches a specific project by ID from Firestore
  * @param projectId The document ID of the project to fetch
- * @returns Project data with entries
+ * @returns Project data with entries and project name
  */
-export const fetchProject = async (projectId: string): Promise<{ entries: Payment[], projectId?: string }> => {
+export const fetchProject = async (projectId: string): Promise<{ entries: Payment[], projectId?: string, projectName?: string }> => {
   try {
     console.log('Fetching project by ID:', projectId);
     const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
@@ -361,7 +361,8 @@ export const fetchProject = async (projectId: string): Promise<{ entries: Paymen
       
       return { 
         entries, 
-        projectId: data.projectId 
+        projectId: data.projectId,
+        projectName: data.name // Return the project name from the document
       };
     }
     
