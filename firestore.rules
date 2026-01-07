@@ -29,9 +29,9 @@ service cloud.firestore {
       );
     }
 
-    // Users collection - users can read/write their own doc, admins can read all
+    // Users collection - any authenticated user can read (for displaying shared user info)
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated() && request.auth.uid == userId;
       allow update: if isAuthenticated() && (
         request.auth.uid == userId ||

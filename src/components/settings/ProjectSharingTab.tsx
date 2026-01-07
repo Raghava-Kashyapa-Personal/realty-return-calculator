@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { RefreshCw, FolderOpen, Users, Share2 } from 'lucide-react';
+import { RefreshCw, FolderOpen, Users, Share2, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchProjects, fetchProjectSharing } from '@/services/firestoreService';
@@ -39,14 +39,21 @@ const ProjectSharingTab = () => {
   const [selectedProject, setSelectedProject] = useState<ProjectWithSharing | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  // Split projects into owned and shared
+  const ownedProjects = useMemo(() => projects.filter((p) => p.isOwner), [projects]);
+  const sharedProjects = useMemo(() => projects.filter((p) => !p.isOwner), [projects]);
+
   const fetchProjectsWithSharing = async () => {
     if (!user) return;
 
     try {
       setLoading(true);
 
-      // Fetch projects (admins see all, users see their own)
-      const projectsData = await fetchProjects(isAdmin ? '' : user.uid);
+      // Fetch projects (admins see all, users see their own + shared)
+      const projectsData = await fetchProjects(
+        isAdmin ? '' : user.uid,
+        user.email || undefined
+      );
 
       // Get sharing info for each project
       const projectsWithSharing: ProjectWithSharing[] = await Promise.all(
@@ -73,13 +80,8 @@ const ProjectSharingTab = () => {
         })
       );
 
-      // Filter: show only projects the user owns (for sharing management)
-      // Admins can see all
-      const filteredProjects = isAdmin
-        ? projectsWithSharing
-        : projectsWithSharing.filter((p) => p.isOwner);
-
-      setProjects(filteredProjects);
+      // Show all projects user has access to (owned + shared)
+      setProjects(projectsWithSharing);
     } catch (error) {
       console.error('Error fetching projects:', error);
       toast({
@@ -135,8 +137,111 @@ const ProjectSharingTab = () => {
     );
   }
 
+  // Table for owned projects (shows sharing info and actions)
+  const OwnedProjectsTable = ({ projectList, showOwner = false }: { projectList: ProjectWithSharing[], showOwner?: boolean }) => (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Project</TableHead>
+          <TableHead>Created</TableHead>
+          {showOwner && <TableHead>Owner</TableHead>}
+          <TableHead>Shared With</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {projectList.map((project) => (
+          <TableRow key={project.id}>
+            <TableCell>
+              <div className="font-medium">{project.name}</div>
+            </TableCell>
+            <TableCell className="text-gray-500 text-sm">
+              {format(project.date, 'MMM d, yyyy')}
+            </TableCell>
+            {showOwner && (
+              <TableCell className="text-gray-600 text-sm">
+                {project.ownerEmail || 'Unknown'}
+              </TableCell>
+            )}
+            <TableCell>
+              {project.sharedWith.length > 0 ? (
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-gray-400" />
+                  <span className="text-sm text-gray-600">
+                    {project.sharedWith.length} user
+                    {project.sharedWith.length !== 1 ? 's' : ''}
+                  </span>
+                  {project.sharedUsers && project.sharedUsers.length > 0 && (
+                    <div className="flex -space-x-2">
+                      {project.sharedUsers.slice(0, 3).map((sharedUser) => (
+                        <Badge
+                          key={sharedUser.uid}
+                          variant="secondary"
+                          className="text-xs"
+                          title={sharedUser.email}
+                        >
+                          {sharedUser.displayName.split(' ')[0]}
+                        </Badge>
+                      ))}
+                      {project.sharedUsers.length > 3 && (
+                        <Badge variant="outline" className="text-xs">
+                          +{project.sharedUsers.length - 3}
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <span className="text-sm text-gray-400">Not shared</span>
+              )}
+            </TableCell>
+            <TableCell className="text-right">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleShareClick(project)}
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                Share
+              </Button>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+
+  // Table for shared projects (simpler - just shows owner)
+  const SharedProjectsTable = ({ projectList }: { projectList: ProjectWithSharing[] }) => (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Project</TableHead>
+          <TableHead>Created</TableHead>
+          <TableHead>Owner</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {projectList.map((project) => (
+          <TableRow key={project.id}>
+            <TableCell>
+              <div className="font-medium">{project.name}</div>
+            </TableCell>
+            <TableCell className="text-gray-500 text-sm">
+              {format(project.date, 'MMM d, yyyy')}
+            </TableCell>
+            <TableCell className="text-gray-600 text-sm">
+              {project.ownerEmail || 'Unknown'}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+
   return (
-    <>
+    <div className="space-y-6">
+      {/* My Projects Section */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -146,7 +251,10 @@ const ProjectSharingTab = () => {
                 {isAdmin ? 'All Projects' : 'My Projects'}
               </CardTitle>
               <CardDescription>
-                Manage project sharing and access ({projects.length} projects)
+                {isAdmin
+                  ? `Manage all projects (${projects.length} total)`
+                  : `Projects you own (${ownedProjects.length})`
+                }
               </CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={fetchProjectsWithSharing}>
@@ -156,79 +264,18 @@ const ProjectSharingTab = () => {
           </div>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Project</TableHead>
-                <TableHead>Created</TableHead>
-                {isAdmin && <TableHead>Owner</TableHead>}
-                <TableHead>Shared With</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {projects.map((project) => (
-                <TableRow key={project.id}>
-                  <TableCell>
-                    <div className="font-medium">{project.name}</div>
-                  </TableCell>
-                  <TableCell className="text-gray-500 text-sm">
-                    {format(project.date, 'MMM d, yyyy')}
-                  </TableCell>
-                  {isAdmin && (
-                    <TableCell className="text-gray-600 text-sm">
-                      {project.ownerEmail || 'Unknown'}
-                    </TableCell>
-                  )}
-                  <TableCell>
-                    {project.sharedWith.length > 0 ? (
-                      <div className="flex items-center gap-2">
-                        <Users className="h-4 w-4 text-gray-400" />
-                        <span className="text-sm text-gray-600">
-                          {project.sharedWith.length} user
-                          {project.sharedWith.length !== 1 ? 's' : ''}
-                        </span>
-                        {project.sharedUsers && project.sharedUsers.length > 0 && (
-                          <div className="flex -space-x-2">
-                            {project.sharedUsers.slice(0, 3).map((sharedUser) => (
-                              <Badge
-                                key={sharedUser.uid}
-                                variant="secondary"
-                                className="text-xs"
-                                title={sharedUser.email}
-                              >
-                                {sharedUser.displayName.split(' ')[0]}
-                              </Badge>
-                            ))}
-                            {project.sharedUsers.length > 3 && (
-                              <Badge variant="outline" className="text-xs">
-                                +{project.sharedUsers.length - 3}
-                              </Badge>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-sm text-gray-400">Not shared</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleShareClick(project)}
-                      disabled={!project.isOwner && !isAdmin}
-                    >
-                      <Share2 className="h-4 w-4 mr-2" />
-                      Share
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-
-          {projects.length === 0 && (
+          {isAdmin ? (
+            projects.length > 0 ? (
+              <OwnedProjectsTable projectList={projects} showOwner={true} />
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <FolderOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No projects found</p>
+              </div>
+            )
+          ) : ownedProjects.length > 0 ? (
+            <OwnedProjectsTable projectList={ownedProjects} />
+          ) : (
             <div className="text-center py-8 text-gray-500">
               <FolderOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p>No projects found</p>
@@ -238,6 +285,32 @@ const ProjectSharingTab = () => {
         </CardContent>
       </Card>
 
+      {/* Shared With Me Section - only show for non-admin users */}
+      {!isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5" />
+              Shared With Me
+            </CardTitle>
+            <CardDescription>
+              Projects others have shared with you ({sharedProjects.length})
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {sharedProjects.length > 0 ? (
+              <SharedProjectsTable projectList={sharedProjects} />
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <UserPlus className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No shared projects</p>
+                <p className="text-sm mt-1">Projects shared with you will appear here</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {selectedProject && (
         <ShareProjectDialog
           open={dialogOpen}
@@ -246,7 +319,7 @@ const ProjectSharingTab = () => {
           onSharingUpdated={handleSharingUpdated}
         />
       )}
-    </>
+    </div>
   );
 };
 

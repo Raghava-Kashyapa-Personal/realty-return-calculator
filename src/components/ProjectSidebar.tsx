@@ -132,9 +132,10 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
       let projectsData = [];
       if (isAdmin) {
         // Fetch all projects for admin (pass empty string to fetch all)
-        projectsData = await fetchProjectsService('');
+        projectsData = await fetchProjectsService('', undefined);
       } else {
-        projectsData = await fetchProjectsService(user.uid);
+        // Pass user email to also fetch projects with pending invites
+        projectsData = await fetchProjectsService(user.uid, user.email || undefined);
       }
       setProjects(projectsData.map(data => ({
         id: data.id,

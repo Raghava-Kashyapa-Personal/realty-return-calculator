@@ -376,39 +376,79 @@ export const fetchProject = async (projectId: string): Promise<{ entries: Paymen
 
 /**
  * Get all projects (documents) from the payments collection for a specific user
- * Includes projects owned by the user AND projects shared with the user
+ * Includes projects owned by the user AND projects shared with the user AND pending invites
  * @param userId The UID of the user whose projects to fetch (empty string for all - admin)
+ * @param userEmail Optional email for checking pending invites
  * @param limit Maximum number of projects to retrieve
  * @returns Array of project objects with id, date, and entry count
  */
-export const fetchProjects = async (userId: string, limitCount: number = 50) => {
+export const fetchProjects = async (userId: string, userEmail?: string, limitCount: number = 50) => {
   try {
     const projectsRef = collection(db, PAYMENTS_COLLECTION);
-    let q;
+    const projectsMap = new Map<string, any>();
 
     if (userId) {
-      // Fetch projects where user is owner OR user is in sharedWith array
-      // Note: Firestore requires composite index for this query
-      q = query(
+      // Query 1: Projects owned by user
+      const ownedQuery = query(
         projectsRef,
-        or(
-          where('ownerId', '==', userId),
-          where('sharedWith', 'array-contains', userId)
-        ),
+        where('ownerId', '==', userId),
         orderBy('createdAt', 'desc'),
         limit(limitCount)
       );
+
+      // Query 2: Projects shared with user
+      const sharedQuery = query(
+        projectsRef,
+        where('sharedWith', 'array-contains', userId),
+        orderBy('createdAt', 'desc'),
+        limit(limitCount)
+      );
+
+      // Execute both queries in parallel
+      const [ownedSnapshot, sharedSnapshot] = await Promise.all([
+        getDocs(ownedQuery),
+        getDocs(sharedQuery)
+      ]);
+
+      // Merge results (using Map to dedupe)
+      ownedSnapshot.forEach((docSnapshot) => {
+        projectsMap.set(docSnapshot.id, { doc: docSnapshot, isSharedWithMe: false });
+      });
+      sharedSnapshot.forEach((docSnapshot) => {
+        if (!projectsMap.has(docSnapshot.id)) {
+          projectsMap.set(docSnapshot.id, { doc: docSnapshot, isSharedWithMe: true });
+        }
+      });
+
+      // Query 3: Projects with pending invites (if email provided)
+      if (userEmail) {
+        const pendingQuery = query(
+          projectsRef,
+          where('pendingInvites', 'array-contains', userEmail.toLowerCase()),
+          orderBy('createdAt', 'desc'),
+          limit(limitCount)
+        );
+        const pendingSnapshot = await getDocs(pendingQuery);
+        pendingSnapshot.forEach((docSnapshot) => {
+          if (!projectsMap.has(docSnapshot.id)) {
+            projectsMap.set(docSnapshot.id, { doc: docSnapshot, isSharedWithMe: true });
+          }
+        });
+      }
     } else {
       // Admin: fetch all projects
-      q = query(
+      const q = query(
         projectsRef,
         orderBy('createdAt', 'desc'),
         limit(limitCount)
       );
+      const querySnapshot = await getDocs(q);
+      querySnapshot.forEach((docSnapshot) => {
+        projectsMap.set(docSnapshot.id, { doc: docSnapshot, isSharedWithMe: false });
+      });
     }
 
-    const querySnapshot = await getDocs(q);
-
+    // Convert Map to array and sort by date
     const projects: Array<{
       id: string;
       date: Date;
@@ -422,7 +462,7 @@ export const fetchProjects = async (userId: string, limitCount: number = 50) => 
       isSharedWithMe: boolean;
     }> = [];
 
-    querySnapshot.forEach((docSnapshot) => {
+    projectsMap.forEach(({ doc: docSnapshot, isSharedWithMe }) => {
       const data = docSnapshot.data() as any;
       projects.push({
         id: docSnapshot.id,
@@ -434,9 +474,12 @@ export const fetchProjects = async (userId: string, limitCount: number = 50) => 
         ownerEmail: data.ownerEmail || '',
         ownerName: data.ownerName || '',
         sharedWith: data.sharedWith || [],
-        isSharedWithMe: userId ? data.ownerId !== userId : false,
+        isSharedWithMe,
       });
     });
+
+    // Sort by date descending
+    projects.sort((a, b) => b.date.getTime() - a.date.getTime());
 
     return projects;
   } catch (error) {
