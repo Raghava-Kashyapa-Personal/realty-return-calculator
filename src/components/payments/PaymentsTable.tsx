@@ -1,17 +1,30 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { EnhancedCalendar } from '@/components/ui/enhanced-calendar';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Payment } from '@/types/project';
 import { processPaymentsWithLoanTracking, ProcessedPayment } from '@/utils/loanTracker';
 import { PartialPaymentBreakdown, PartialPaymentIndicator, LoanBalanceDisplay } from './PartialPaymentBreakdown';
 import { LoanAdjustmentDialog } from './LoanAdjustmentDialog';
 type PaymentType = 'payment' | 'return' | 'interest' | 'drawdown' | 'repayment';
-import { Trash2, CalendarIcon, Pencil, Check, X, Plus, Settings } from 'lucide-react';
+import { Trash2, CalendarIcon, Pencil, Check, X, Plus, Settings, Filter, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { format } from 'date-fns';
+
+// Payment type filter configuration
+const PAYMENT_TYPE_CONFIG: Record<PaymentType, { label: string; bgClass: string; textClass: string; borderClass: string }> = {
+  payment: { label: 'Payment', bgClass: 'bg-red-100', textClass: 'text-red-800', borderClass: 'border-red-300' },
+  return: { label: 'Return', bgClass: 'bg-green-100', textClass: 'text-green-800', borderClass: 'border-green-300' },
+  interest: { label: 'Interest', bgClass: 'bg-purple-100', textClass: 'text-purple-800', borderClass: 'border-purple-300' },
+  drawdown: { label: 'Drawdown', bgClass: 'bg-orange-100', textClass: 'text-orange-800', borderClass: 'border-orange-300' },
+  repayment: { label: 'Repayment', bgClass: 'bg-blue-100', textClass: 'text-blue-800', borderClass: 'border-blue-300' },
+};
+
+type SortField = 'date' | 'amount' | 'type' | 'description' | 'balance';
+type SortDirection = 'asc' | 'desc' | null;
 
 interface PaymentsTableProps {
   payments: Payment[];
@@ -58,10 +71,119 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
   onToggleReturnType,
   onUpdatePayment
 }) => {
-  const [loanAdjustmentDialog, setLoanAdjustmentDialog] = React.useState<{
+  const [loanAdjustmentDialog, setLoanAdjustmentDialog] = useState<{
     open: boolean;
     payment: Payment | null;
   }>({ open: false, payment: null });
+
+  // Filter state - all types selected by default
+  const [activeFilters, setActiveFilters] = useState<Set<PaymentType>>(
+    new Set(['payment', 'return', 'interest', 'drawdown', 'repayment'])
+  );
+
+  // Sort state
+  const [sortField, setSortField] = useState<SortField | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+
+  // Get unique payment types from current data
+  const availableTypes = useMemo(() => {
+    const types = new Set<PaymentType>();
+    payments.forEach(p => {
+      if (p.type) types.add(p.type as PaymentType);
+    });
+    return types;
+  }, [payments]);
+
+  // Toggle a filter
+  const toggleFilter = (type: PaymentType) => {
+    setActiveFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        // Don't allow deselecting all filters
+        if (next.size > 1) {
+          next.delete(type);
+        }
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  };
+
+  // Select all filters
+  const selectAllFilters = () => {
+    setActiveFilters(new Set(['payment', 'return', 'interest', 'drawdown', 'repayment']));
+  };
+
+  // Handle sort click
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // Cycle through: asc -> desc -> null
+      if (sortDirection === 'asc') {
+        setSortDirection('desc');
+      } else if (sortDirection === 'desc') {
+        setSortDirection(null);
+        setSortField(null);
+      } else {
+        setSortDirection('asc');
+      }
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Get sort icon for header
+  const getSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="h-3 w-3 ml-1 opacity-50" />;
+    }
+    if (sortDirection === 'asc') {
+      return <ArrowUp className="h-3 w-3 ml-1" />;
+    }
+    if (sortDirection === 'desc') {
+      return <ArrowDown className="h-3 w-3 ml-1" />;
+    }
+    return <ArrowUpDown className="h-3 w-3 ml-1 opacity-50" />;
+  };
+
+  // Filter and sort payments
+  const filteredAndSortedPayments = useMemo(() => {
+    // First filter
+    let result = payments.filter(p => activeFilters.has((p.type || 'payment') as PaymentType));
+
+    // Then sort if needed
+    if (sortField && sortDirection) {
+      result = [...result].sort((a, b) => {
+        let comparison = 0;
+
+        switch (sortField) {
+          case 'date':
+            const dateA = a.date ? new Date(a.date).getTime() : a.month;
+            const dateB = b.date ? new Date(b.date).getTime() : b.month;
+            comparison = dateA - dateB;
+            break;
+          case 'amount':
+            comparison = a.amount - b.amount;
+            break;
+          case 'type':
+            comparison = (a.type || 'payment').localeCompare(b.type || 'payment');
+            break;
+          case 'description':
+            const descA = typeof a.description === 'string' ? a.description : '';
+            const descB = typeof b.description === 'string' ? b.description : '';
+            comparison = descA.localeCompare(descB);
+            break;
+          default:
+            comparison = 0;
+        }
+
+        return sortDirection === 'asc' ? comparison : -comparison;
+      });
+    }
+
+    return result;
+  }, [payments, activeFilters, sortField, sortDirection]);
   // Local implementations that can be overridden by props
   const monthToDate = (month: number) => {
     if (propMonthToDate) return propMonthToDate(month);
@@ -85,8 +207,21 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
     }
   };
 
-  // Process payments with loan tracking
-  const paymentsWithBalance = processPaymentsWithLoanTracking(payments, true);
+  // Process filtered payments with loan tracking
+  // Note: We process ALL payments first to get correct running balances, then filter the display
+  const allPaymentsWithBalance = processPaymentsWithLoanTracking(payments, true);
+
+  // Create a map of payment ID to processed payment for quick lookup
+  const balanceMap = useMemo(() => {
+    const map = new Map<string, ProcessedPayment>();
+    allPaymentsWithBalance.forEach(p => map.set(p.id, p));
+    return map;
+  }, [allPaymentsWithBalance]);
+
+  // Get filtered and sorted payments with their balance info
+  const paymentsWithBalance = useMemo(() => {
+    return filteredAndSortedPayments.map(p => balanceMap.get(p.id) || p as ProcessedPayment);
+  }, [filteredAndSortedPayments, balanceMap]);
   const totalPayments = payments.reduce((sum, p) => sum + (p.type === 'return' ? p.amount : -p.amount), 0);
   const netCashFlow = payments.reduce((sum, p) => {
     if (p.type === 'return') {
@@ -123,11 +258,78 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
         <Table className="min-w-full">
           <TableHeader className="bg-white border-b border-gray-200">
             <TableRow className="hover:bg-transparent">
-              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Date</TableHead>
-              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Amount (₹)</TableHead>
-              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Type</TableHead>
-              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Description</TableHead>
-              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">Outstanding Principal</TableHead>
+              <TableHead
+                className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100 cursor-pointer hover:bg-gray-50 select-none"
+                onClick={() => handleSort('date')}
+              >
+                <div className="flex items-center justify-center">
+                  Date {getSortIcon('date')}
+                </div>
+              </TableHead>
+              <TableHead
+                className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100 cursor-pointer hover:bg-gray-50 select-none"
+                onClick={() => handleSort('amount')}
+              >
+                <div className="flex items-center justify-center">
+                  Amount (₹) {getSortIcon('amount')}
+                </div>
+              </TableHead>
+              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100 p-0">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <div className="flex items-center justify-center cursor-pointer hover:bg-gray-50 py-3 px-2 select-none">
+                      Type
+                      <Filter className={`h-3 w-3 ml-1 ${activeFilters.size < 5 ? 'text-blue-600' : 'opacity-50'}`} />
+                    </div>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-48 p-2" align="center">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between pb-2 border-b">
+                        <span className="text-xs font-medium text-gray-700">Filter by type</span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={selectAllFilters}
+                          className="h-6 px-2 text-xs"
+                        >
+                          Select all
+                        </Button>
+                      </div>
+                      {(Object.keys(PAYMENT_TYPE_CONFIG) as PaymentType[]).map(type => {
+                        const config = PAYMENT_TYPE_CONFIG[type];
+                        const count = payments.filter(p => (p.type || 'payment') === type).length;
+                        if (count === 0) return null;
+                        return (
+                          <label
+                            key={type}
+                            className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded"
+                          >
+                            <Checkbox
+                              checked={activeFilters.has(type)}
+                              onCheckedChange={() => toggleFilter(type)}
+                            />
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${config.bgClass} ${config.textClass}`}>
+                              {config.label}
+                            </span>
+                            <span className="text-xs text-gray-400 ml-auto">({count})</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </TableHead>
+              <TableHead
+                className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100 cursor-pointer hover:bg-gray-50 select-none"
+                onClick={() => handleSort('description')}
+              >
+                <div className="flex items-center justify-center">
+                  Description {getSortIcon('description')}
+                </div>
+              </TableHead>
+              <TableHead className="py-3 text-xs font-normal text-gray-500 text-center border-r border-gray-100">
+                Outstanding Principal
+              </TableHead>
               <TableHead className="py-3 text-xs font-normal text-gray-500 text-center w-24">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -136,6 +338,18 @@ export const PaymentsTable: React.FC<PaymentsTableProps> = ({
               <TableRow className="hover:bg-white">
                 <TableCell colSpan={6} className="py-4 text-center text-sm text-gray-500 border-b border-gray-100">
                   No cash flow entries yet. Add your first entry to get started.
+                </TableCell>
+              </TableRow>
+            )}
+            {payments.length > 0 && paymentsWithBalance.length === 0 && (
+              <TableRow className="hover:bg-white">
+                <TableCell colSpan={6} className="py-4 text-center text-sm text-gray-500 border-b border-gray-100">
+                  <div className="flex flex-col items-center gap-2">
+                    <span>No entries match your filter.</span>
+                    <Button variant="link" size="sm" onClick={selectAllFilters} className="text-blue-600">
+                      Show all entries
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             )}

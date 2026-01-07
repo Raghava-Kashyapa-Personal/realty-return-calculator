@@ -1,10 +1,11 @@
 import { db } from '../firebaseConfig';
-import { collection, doc, setDoc, getDoc, Timestamp, updateDoc, arrayUnion, getDocs, query, orderBy, limit, where, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, Timestamp, updateDoc, arrayUnion, getDocs, query, orderBy, limit, where, deleteDoc, or } from 'firebase/firestore';
 import { Payment, ProjectData } from '@/types/project';
+import { COLLECTIONS } from '@/constants/collections';
 
-// Collection names
-const CASHFLOW_COLLECTION = 'cashflows';
-const PAYMENTS_COLLECTION = 'projects'; // Renamed from 'test' to 'projects'
+// Collection names - using constants for consistency
+const CASHFLOW_COLLECTION = COLLECTIONS.CASHFLOWS;
+const PAYMENTS_COLLECTION = COLLECTIONS.PROJECTS;
 
 /**
  * Deletes a project (document) by its ID from Firestore
@@ -375,45 +376,68 @@ export const fetchProject = async (projectId: string): Promise<{ entries: Paymen
 
 /**
  * Get all projects (documents) from the payments collection for a specific user
- * @param userId The UID of the user whose projects to fetch
+ * Includes projects owned by the user AND projects shared with the user
+ * @param userId The UID of the user whose projects to fetch (empty string for all - admin)
  * @param limit Maximum number of projects to retrieve
  * @returns Array of project objects with id, date, and entry count
  */
-export const fetchProjects = async (userId: string, limitCount: number = 20) => {
+export const fetchProjects = async (userId: string, limitCount: number = 50) => {
   try {
     const projectsRef = collection(db, PAYMENTS_COLLECTION);
     let q;
+
     if (userId) {
+      // Fetch projects where user is owner OR user is in sharedWith array
+      // Note: Firestore requires composite index for this query
       q = query(
         projectsRef,
-        where('ownerId', '==', userId),
+        or(
+          where('ownerId', '==', userId),
+          where('sharedWith', 'array-contains', userId)
+        ),
         orderBy('createdAt', 'desc'),
         limit(limitCount)
       );
     } else {
+      // Admin: fetch all projects
       q = query(
         projectsRef,
         orderBy('createdAt', 'desc'),
         limit(limitCount)
       );
     }
+
     const querySnapshot = await getDocs(q);
-    
-    const projects = [];
-    querySnapshot.forEach((doc) => {
-      const data = doc.data() as any;
+
+    const projects: Array<{
+      id: string;
+      date: Date;
+      entryCount: number;
+      projectId: string;
+      name: string;
+      ownerId: string;
+      ownerEmail: string;
+      ownerName: string;
+      sharedWith: string[];
+      isSharedWithMe: boolean;
+    }> = [];
+
+    querySnapshot.forEach((docSnapshot) => {
+      const data = docSnapshot.data() as any;
       projects.push({
-        id: doc.id,
-        date: data.createdAt?.toDate() || new Date(doc.id),
+        id: docSnapshot.id,
+        date: data.createdAt?.toDate() || new Date(docSnapshot.id),
         entryCount: (data.entries || []).length,
         projectId: data.projectId,
         name: data.name || '',
         ownerId: data.ownerId || '',
         ownerEmail: data.ownerEmail || '',
-        ownerName: data.ownerName || ''
+        ownerName: data.ownerName || '',
+        sharedWith: data.sharedWith || [],
+        isSharedWithMe: userId ? data.ownerId !== userId : false,
       });
     });
-    
+
     return projects;
   } catch (error) {
     console.error('Error fetching projects:', error);
@@ -450,7 +474,7 @@ export const createNewProject = async (projectName?: string, ownerId?: string, o
     const today = new Date().toISOString().split('T')[0];
     const projectId = `${today}-${Math.random().toString(36).substring(2, 8)}`;
     const name = projectName || `Project ${new Date().toLocaleString()}`;
-    
+
     await setDoc(doc(db, PAYMENTS_COLLECTION, projectId), {
       createdAt: Timestamp.now(),
       updatedAt: Timestamp.now(),
@@ -458,9 +482,10 @@ export const createNewProject = async (projectName?: string, ownerId?: string, o
       entries: [],
       ownerId: ownerId || null,
       ownerEmail: ownerEmail || null,
-      ownerName: ownerName || null
+      ownerName: ownerName || null,
+      sharedWith: [], // Initialize empty shared users array
     });
-    
+
     return { projectId, name, ownerId, ownerEmail, ownerName };
   } catch (error) {
     console.error('Error creating new project:', error);
@@ -727,7 +752,7 @@ export const bulkOperations = async (operations: Array<{
   data?: { projectData: ProjectData; payments: Payment[] };
 }>): Promise<Array<{ projectId: string; success: boolean; error?: string }>> => {
   const results = [];
-  
+
   for (const operation of operations) {
     try {
       if (operation.type === 'save' && operation.data) {
@@ -738,13 +763,215 @@ export const bulkOperations = async (operations: Array<{
         results.push({ projectId: operation.projectId, success: true });
       }
     } catch (error) {
-      results.push({ 
-        projectId: operation.projectId, 
-        success: false, 
+      results.push({
+        projectId: operation.projectId,
+        success: false,
         error: error instanceof Error ? error.message : String(error)
       });
     }
   }
-  
+
   return results;
+};
+
+// ============================================
+// PROJECT SHARING FUNCTIONS
+// ============================================
+
+/**
+ * Fetches the sharing information for a project
+ * @param projectId The project ID to fetch sharing info for
+ * @returns Object with ownerId, sharedWith array, and pendingInvites
+ */
+export const fetchProjectSharing = async (projectId: string): Promise<{
+  ownerId: string;
+  ownerEmail?: string;
+  sharedWith: string[];
+  pendingInvites: string[];
+} | null> => {
+  try {
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      return {
+        ownerId: data.ownerId || '',
+        ownerEmail: data.ownerEmail,
+        sharedWith: data.sharedWith || [],
+        pendingInvites: data.pendingInvites || [],
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error(`Error fetching sharing info for project ${projectId}:`, error);
+    return null;
+  }
+};
+
+/**
+ * Updates the sharing list for a project
+ * @param projectId The project ID to update sharing for
+ * @param sharedWith Array of user UIDs to share with
+ */
+export const updateProjectSharing = async (projectId: string, sharedWith: string[]): Promise<void> => {
+  try {
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
+    await updateDoc(docRef, {
+      sharedWith,
+      updatedAt: Timestamp.now(),
+    });
+    console.log(`Updated sharing for project ${projectId} with ${sharedWith.length} users`);
+  } catch (error) {
+    console.error(`Error updating sharing for project ${projectId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Updates the sharing list and pending invites for a project
+ * @param projectId The project ID to update sharing for
+ * @param sharedWith Array of user UIDs to share with
+ * @param pendingInvites Array of emails to invite (users who haven't signed up yet)
+ */
+export const updateProjectSharingWithInvites = async (
+  projectId: string,
+  sharedWith: string[],
+  pendingInvites: string[]
+): Promise<void> => {
+  try {
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
+    await updateDoc(docRef, {
+      sharedWith,
+      pendingInvites,
+      updatedAt: Timestamp.now(),
+    });
+    console.log(
+      `Updated sharing for project ${projectId}: ${sharedWith.length} users, ${pendingInvites.length} pending invites`
+    );
+  } catch (error) {
+    console.error(`Error updating sharing for project ${projectId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Adds a user to the shared list for a project
+ * @param projectId The project ID
+ * @param userId The user UID to add
+ */
+export const addUserToProject = async (projectId: string, userId: string): Promise<void> => {
+  try {
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
+    await updateDoc(docRef, {
+      sharedWith: arrayUnion(userId),
+      updatedAt: Timestamp.now(),
+    });
+    console.log(`Added user ${userId} to project ${projectId}`);
+  } catch (error) {
+    console.error(`Error adding user to project ${projectId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Removes a user from the shared list for a project
+ * @param projectId The project ID
+ * @param userId The user UID to remove
+ */
+export const removeUserFromProject = async (projectId: string, userId: string): Promise<void> => {
+  try {
+    // First get the current sharedWith array
+    const sharingInfo = await fetchProjectSharing(projectId);
+    if (!sharingInfo) {
+      throw new Error('Project not found');
+    }
+
+    // Filter out the user
+    const updatedSharedWith = sharingInfo.sharedWith.filter((uid) => uid !== userId);
+
+    // Update the document
+    const docRef = doc(db, PAYMENTS_COLLECTION, projectId);
+    await updateDoc(docRef, {
+      sharedWith: updatedSharedWith,
+      updatedAt: Timestamp.now(),
+    });
+    console.log(`Removed user ${userId} from project ${projectId}`);
+  } catch (error) {
+    console.error(`Error removing user from project ${projectId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Checks if a user has access to a project (owner or shared)
+ * @param projectId The project ID
+ * @param userId The user UID to check
+ * @returns True if user has access
+ */
+export const checkProjectAccess = async (projectId: string, userId: string): Promise<boolean> => {
+  try {
+    const sharingInfo = await fetchProjectSharing(projectId);
+    if (!sharingInfo) {
+      return false;
+    }
+
+    return sharingInfo.ownerId === userId || sharingInfo.sharedWith.includes(userId);
+  } catch (error) {
+    console.error(`Error checking project access for ${projectId}:`, error);
+    return false;
+  }
+};
+
+/**
+ * Processes pending invites for a user who just signed up
+ * Converts any pending invites matching their email to actual sharing
+ * @param userEmail The email of the user who just signed up
+ * @param userId The UID of the user
+ * @returns Number of projects the user was granted access to
+ */
+export const processPendingInvites = async (userEmail: string, userId: string): Promise<number> => {
+  try {
+    const email = userEmail.toLowerCase();
+    const projectsRef = collection(db, PAYMENTS_COLLECTION);
+
+    // Find all projects where this email is in pendingInvites
+    const q = query(projectsRef, where('pendingInvites', 'array-contains', email));
+    const snapshot = await getDocs(q);
+
+    let grantedCount = 0;
+
+    for (const docSnapshot of snapshot.docs) {
+      const data = docSnapshot.data();
+      const currentSharedWith = data.sharedWith || [];
+      const currentPendingInvites = data.pendingInvites || [];
+
+      // Add user to sharedWith if not already there
+      if (!currentSharedWith.includes(userId)) {
+        const updatedSharedWith = [...currentSharedWith, userId];
+        const updatedPendingInvites = currentPendingInvites.filter(
+          (e: string) => e.toLowerCase() !== email
+        );
+
+        await updateDoc(doc(db, PAYMENTS_COLLECTION, docSnapshot.id), {
+          sharedWith: updatedSharedWith,
+          pendingInvites: updatedPendingInvites,
+          updatedAt: Timestamp.now(),
+        });
+
+        grantedCount++;
+        console.log(`Granted access to project ${docSnapshot.id} for user ${userEmail}`);
+      }
+    }
+
+    if (grantedCount > 0) {
+      console.log(`Processed ${grantedCount} pending invites for ${userEmail}`);
+    }
+
+    return grantedCount;
+  } catch (error) {
+    console.error(`Error processing pending invites for ${userEmail}:`, error);
+    return 0;
+  }
 };

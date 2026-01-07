@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { collection, query, getDocs, orderBy, limit, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
-import { X, PlusCircle, Calendar, Pencil, Check } from 'lucide-react';
+import { Badge } from './ui/badge';
+import { X, PlusCircle, Calendar, Pencil, Check, Settings, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { useProject } from '@/contexts/ProjectContext';
@@ -19,6 +21,8 @@ interface Session {
   name?: string;
   ownerEmail?: string;
   ownerName?: string;
+  isSharedWithMe?: boolean;
+  sharedWith?: string[];
 }
 
 interface ProjectSidebarProps {
@@ -36,6 +40,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
   currentProjectId: propCurrentProjectId,
   onDeleteProject
 }) => {
+  const navigate = useNavigate();
   const { currentProjectId: contextProjectId, setCurrentProjectId } = useProject();
   const currentProjectId = contextProjectId || propCurrentProjectId;
   const [projects, setProjects] = useState<Session[]>([]);
@@ -138,7 +143,9 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
         totalAmount: 0,
         name: data.name || `Project ${data.id}`,
         ownerEmail: data.ownerEmail || '',
-        ownerName: data.ownerName || ''
+        ownerName: data.ownerName || '',
+        isSharedWithMe: data.isSharedWithMe || false,
+        sharedWith: data.sharedWith || [],
       })));
     } catch (error) {
       console.error('Error fetching projects:', error);
@@ -186,10 +193,20 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
       {isOpen && (
         <>
           <div className="p-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold mb-2">Previous Projects</h2>
-            <Button 
-              variant="outline" 
-              className="w-full justify-start" 
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-semibold">Projects</h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => navigate('/settings')}
+                title="Settings"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </div>
+            <Button
+              variant="outline"
+              className="w-full justify-start"
               onClick={onNewProject}
             >
               <PlusCircle className="h-4 w-4 mr-2" />
@@ -212,18 +229,29 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                   <div
                     key={project.id}
                     className={`p-3 mb-2 rounded-md flex items-center justify-between transition-colors
-                      ${currentProjectId === project.id 
-                        ? 'bg-blue-100 border-l-4 border-blue-500' 
+                      ${currentProjectId === project.id
+                        ? 'bg-blue-100 border-l-4 border-blue-500'
                         : 'hover:bg-gray-100'}`}
                   >
                     <div
                       className="flex items-center cursor-pointer flex-1"
                       onClick={() => onSelectProject(project.id)}
                     >
-                      <Calendar className="h-4 w-4 mr-2" />
+                      <Calendar className="h-4 w-4 mr-2 flex-shrink-0" />
                       <div className="flex flex-col flex-1 min-w-0">
-                        <div className="font-medium text-sm truncate">
-                          {project.name}
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium text-sm truncate">
+                            {project.name}
+                          </span>
+                          {/* Sharing indicators */}
+                          {project.isSharedWithMe && (
+                            <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4">
+                              Shared
+                            </Badge>
+                          )}
+                          {!project.isSharedWithMe && project.sharedWith && project.sharedWith.length > 0 && (
+                            <Users className="h-3 w-3 text-gray-400" title={`Shared with ${project.sharedWith.length} user(s)`} />
+                          )}
                         </div>
                         {/* Show owner name and email for admin users, single line, compact */}
                         {isAdmin && (project.ownerName || project.ownerEmail) && (
@@ -241,7 +269,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
                         </div>
                       </div>
                     </div>
-                    {onDeleteProject && (
+                    {onDeleteProject && !project.isSharedWithMe && (
                       <Button
                         variant="ghost"
                         size="icon"
